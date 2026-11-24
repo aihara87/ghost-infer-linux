@@ -7,3 +7,13 @@
 /demo-out
 /dist
 /graphify-out
+
+# Python (scripts/ & nightly/)
+__pycache__/
+*.py[cod]
+.venv/
+
+# Runtime & CUDA kernel caches / logs
+*.cubin
+*.log
+*.rs.bk
