@@ -327,6 +327,10 @@ pub fn network_wanted() -> bool {
     auth::network_wanted()
 }
 
+fn same_dir(a: &Path, b: &Path) -> bool {
+    a == b || matches!((std::fs::canonicalize(a), std::fs::canonicalize(b)), (Ok(ca), Ok(cb)) if ca == cb)
+}
+
 pub fn serve(o: &Opts, host: &str, port: u16) -> Result<(), String> {
     let listener = TcpListener::bind((host, port)).map_err(|e| format!("cannot listen on {host}:{port}: {e}"))?;
     let _ = PORT.set(port);
@@ -334,7 +338,12 @@ pub fn serve(o: &Opts, host: &str, port: u16) -> Result<(), String> {
     // or POST /api/models/load) from the --models folders
     let start_idle = o.model.as_os_str().is_empty();
     let own = (!start_idle).then(|| o.model.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new(".")).to_path_buf());
-    let mut dirs: Vec<PathBuf> = own.into_iter().chain(o.models.iter().cloned()).collect();
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for d in own.into_iter().chain(o.models.iter().cloned()) {
+        if !dirs.iter().any(|x| same_dir(x, &d)) {
+            dirs.push(d);
+        }
+    }
     if dirs.is_empty() {
         dirs.push(PathBuf::from("."));
     }
@@ -1691,12 +1700,12 @@ fn handle(mut conn: TcpStream, work: &mpsc::Sender<Work>, shared: &Shared) -> Re
                         return respond_private(&mut conn, 400, &error_body(&format!("{} is not a folder", add.display())));
                     }
                     let mut dirs = shared.dirs.lock().unwrap();
-                    if !dirs.contains(&add) {
+                    if !dirs.iter().any(|d| same_dir(d, &add)) {
                         dirs.push(add);
                     }
                 }
                 if let Some(remove) = path("remove") {
-                    shared.dirs.lock().unwrap().retain(|d| *d != remove);
+                    shared.dirs.lock().unwrap().retain(|d| !same_dir(d, &remove));
                 }
                 respond_private(&mut conn, 200, &shared.folders_json())
             }
@@ -3411,5 +3420,12 @@ mod think_split_tests {
             assert_eq!(r, "\nplan it\n", "cut {cut}");
             assert_eq!(c, "\n\nThe answer <b>.", "cut {cut}");
         }
+    }
+
+    /// Canonical folder equality avoids duplicate entries for `.` and its full path.
+    #[test]
+    fn same_dir_matches_canonical_paths() {
+        let cwd = std::env::current_dir().unwrap();
+        assert!(super::same_dir(std::path::Path::new("."), &cwd));
     }
 }

@@ -1498,7 +1498,7 @@ impl App {
         let me = button(
             row![
                 canvas(Ghost::still(1.0, s.accent)).width(24).height(22),
-                column![text(tr("This PC")).size(13.5).color(s.text), text(model).size(12).color(s.faint).wrapping(text::Wrapping::None)].width(Fill),
+                column![text(tr("This PC")).size(13.5).color(s.text), container(text(model).size(12).color(s.faint).wrapping(text::Wrapping::None)).width(Fill).clip(true)].width(Fill),
                 icon(ic::SETTINGS, 13).color(s.muted),
             ]
             .spacing(10)
@@ -2195,15 +2195,24 @@ impl App {
             }
             if !r.answer.is_empty() {
                 flush(&mut group, &mut parts);
-                let mut body: Vec<Element<'a, Message>> = r
-                    .md
-                    .iter()
-                    .map(|p| match p {
-                        crate::mdtable::Part::Text(c) => markdown::view_with(c.items(), settings, &Md(s)),
-                        crate::mdtable::Part::Table(t) => md_table(s, t, settings),
-                    })
-                    .collect();
-                parts.push(if body.len() == 1 { body.pop().unwrap() } else { column(body).spacing(settings.spacing.0).into() });
+                let has_md = r.md.iter().any(|p| match p {
+                    crate::mdtable::Part::Text(c) => !c.items().is_empty(),
+                    crate::mdtable::Part::Table(_) => true,
+                });
+                if has_md {
+                    let mut body: Vec<Element<'a, Message>> = r
+                        .md
+                        .iter()
+                        .map(|p| match p {
+                            crate::mdtable::Part::Text(c) => markdown::view_with(c.items(), settings, &Md(s)),
+                            crate::mdtable::Part::Table(t) => md_table(s, t, settings),
+                        })
+                        .collect();
+                    parts.push(if body.len() == 1 { body.pop().unwrap() } else { column(body).spacing(settings.spacing.0).into() });
+                } else {
+                    // Markdown drops pure raw-HTML/tag output (`<function>`, etc.); show the plain text instead of a blank bubble.
+                    parts.push(crate::select::text(r.answer.as_str()).size(15.5).color(s.text).line_height(1.55).width(Fill).into());
+                }
             }
             // task list updates show in the rail, not as lines in the reply
             group.extend(m.tools.iter().enumerate().filter(|(_, t)| t.round == k && t.name != "update_tasks").map(|(j, _)| j));

@@ -27,6 +27,26 @@ pub fn server_exit_error() -> Option<String> {
     Some(tail.unwrap_or_else(|| format!("ghost-infer exited ({status})")))
 }
 
+fn stop_child(mut child: Child, graceful: bool) {
+    if graceful {
+        for _ in 0..20 {
+            if !matches!(child.try_wait(), Ok(None)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Stops the `ghost-infer` server spawned by this app; waits briefly when `graceful` is set, then terminates.
+pub fn stop_server(graceful: bool) {
+    let Ok(mut guard) = CHILD.lock() else { return };
+    let Some(child) = guard.take() else { return };
+    stop_child(child, graceful);
+}
+
 /// A model the first run offers, from Hugging Face.
 pub struct Offer {
     pub name: &'static str,
@@ -148,4 +168,15 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>, model: Opt
 /// "6.2 of 16.8 GB".
 pub fn progress_text(bytes: f64, total: f64) -> String {
     crate::tf!("{:.1} of {:.1} GB", "{:.1} / {:.1} GB", bytes / 1e9, total / 1e9)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stop_child_terminates_running_process() {
+        let child = std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let pid = child.id();
+        super::stop_child(child, false);
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
 }

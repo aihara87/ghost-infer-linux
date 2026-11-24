@@ -1740,7 +1740,7 @@ impl App {
             Message::ToggleMaximize => return iced::window::latest().and_then(iced::window::toggle_maximize),
             Message::Minimize => return iced::window::latest().and_then(|id| iced::window::minimize(id, true)),
             Message::CloseWindow => {
-                if self.own_server {
+                if self.own_server || setup::we_started_server() {
                     return Task::done(Message::Quit);
                 }
                 return iced::exit();
@@ -1845,8 +1845,16 @@ impl App {
             }
             // the server runs without a window, so the app stops it: the model leaves the GPU, then the app closes
             Message::Quit => {
-                let Some(api) = self.api.clone() else { return iced::exit() };
-                return Task::perform(blocking(move || api.post("/api/quit", &Json::Null)), |_| ()).discard().chain(iced::exit());
+                let api = self.api.clone();
+                return Task::perform(
+                    blocking(move || {
+                        let graceful = api.is_some_and(|a| a.post("/api/quit", &Json::Null).is_ok());
+                        setup::stop_server(graceful);
+                    }),
+                    |_| (),
+                )
+                .discard()
+                .chain(iced::exit());
             }
             Message::TogglePlan => self.plan_open = Some(!self.plan_shown()),
             Message::ToggleRail => {
@@ -3212,5 +3220,10 @@ mod tests {
 
         assert_eq!(super::split_think("<think>\n<think>\n</think>\n\n</think>\n\n</think>\n\n"), ("", ""));
         assert_eq!(super::split_think("<think>\nhi\n</think>\n\nhello"), ("hi", "hello"));
+
+        let empty_html = iced::widget::markdown::Content::parse("<function>\n<result>\n");
+        assert!(empty_html.items().is_empty());
+        let visible_md = iced::widget::markdown::Content::parse("hello");
+        assert!(!visible_md.items().is_empty());
     }
 }
