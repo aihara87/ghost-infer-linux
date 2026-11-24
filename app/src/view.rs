@@ -1,6 +1,6 @@
 //! How the app looks: Claude Desktop's calm structure in ghost-infer's colours, as two skins: Graphite
-//! (dark, neutral greys) and Fog (light). Icons come from Segoe MDL2 Assets, the icon font every Windows 10
-//! and 11 has; text is Instrument Sans, the greeting Georgia.
+//! (dark, neutral greys) and Fog (light). Icons come from DejaVu Sans; text is Instrument Sans, the
+//! greeting DejaVu Serif.
 
 use crate::i18n::tr;
 use iced::widget::{button, canvas, column, container, markdown, mouse_area, opaque, rich_text, row, scrollable, stack, text, text_editor, text_input, tooltip, Space};
@@ -136,7 +136,6 @@ mod ic {
     pub const CLOCK: char = '\u{25D0}';
     pub const UNDO: char = '\u{21B6}';
     pub const DOWNLOAD: char = '\u{2193}';
-    pub const OPEN_NEW: char = '\u{2197}';
     pub const FLAG: char = '\u{2691}';
     pub const REPEAT: char = '\u{21BA}';
     pub const PHONE: char = '\u{260E}';
@@ -306,9 +305,6 @@ impl App {
             body = body.push(self.sidebar());
         }
         body = body.push(self.with_badges(self.main()));
-        if self.preview_shown() {
-            body = body.push(self.preview_pane());
-        }
         if self.tasks_panel {
             body = body.push(self.tasks_panel());
         }
@@ -485,8 +481,8 @@ impl App {
             .into()
     }
 
-    /// The window's resize edges, invisible strips over everything (the window has no Windows frame to
-    /// grab); a press hands the resize to Windows. None when maximized.
+    /// The window's resize edges, invisible strips over everything (the window is frameless); a press starts
+    /// a compositor drag-resize. None when maximized.
     fn framed<'a>(&'a self, body: Element<'a, Message>) -> Element<'a, Message> {
         use iced::mouse::Interaction as I;
         use iced::window::Direction as D;
@@ -850,7 +846,7 @@ impl App {
                         tr("Sleep training"),
                         vec![row_of(
                             tr("Not set up on this computer"),
-                            tr("It trains with Python and PyTorch on the original weights of the model that learns (Qwen3-4B), from a copy of ghost-infer's source: run scripts\\nightly\\run.py there once to set it up. The installer does not include it yet.").into(),
+                            tr("It trains with Python and PyTorch on the original weights of the model that learns (Qwen3-4B), from a copy of ghost-infer's source: run scripts/nightly/run.py there once to set it up.").into(),
                             value(tr("Off").into()),
                         )],
                     )
@@ -1378,7 +1374,7 @@ impl App {
             .into()
     }
 
-    /// Minimise, maximise (or restore) and close, drawn like Windows' own: 46 by 32, close turning red.
+    /// Minimise, maximise (or restore) and close buttons: 46 by 32, close turning red.
     fn window_controls(&self) -> Element<'_, Message> {
         let s = self.skin();
         let b = |c: char, msg: Message, close: bool| {
@@ -1447,7 +1443,7 @@ impl App {
         let mut col = column![chrome, nav(ic::ADD, tr("New chat"), Message::NewChat)].spacing(1);
         // the plugins' pages, under New chat: each with the icon its plugin picked
         for p in &self.panels {
-            let open = self.preview_shown() && self.preview_url.as_deref().is_some_and(|u| u.ends_with(&p.url));
+            let open = self.preview_url.as_deref().is_some_and(|u| u.ends_with(&p.url));
             col = col.push(
                 button(row![icon(plugin_icon(&p.icon), 14).color(s.muted), container(text(p.title.as_str()).size(14).color(s.text).wrapping(text::Wrapping::None)).width(Fill).clip(true)].spacing(12).align_y(Alignment::Center))
                     .on_press(Message::OpenPanel(p.url.clone()))
@@ -1537,14 +1533,14 @@ impl App {
         }
         // the title bar: drag the window by its empty part, the window's buttons at its right
         // the rail's switch; with the rail open, the window's buttons move to its top
-        // a page the agent wrote, with its pane closed: the button that shows it again
-        if self.preview_url.is_some() && !self.preview_open {
+        // a page or plugin panel last opened: button to reopen it in the browser
+        if self.preview_url.is_some() {
             top = top.push(button(icon(ic::GLOBE, 13).color(s.muted)).on_press(Message::PreviewOpen).padding(8).style(move |_, st| row_style(s, st, false)));
         }
         let on = self.rail;
         top = top.push(button(icon(ic::DOCK_RIGHT, 13).color(if on { s.text } else { s.muted })).on_press(Message::ToggleRail).padding(8).style(move |_, st| row_style(s, st, on)));
-        // the window's buttons at the window's top right: here, unless the preview pane or the rail is to the right
-        let top: Element<'_, Message> = if self.rail || self.preview_shown() { drag_area(top) } else { row![drag_area(top), self.window_controls()].into() };
+        // the window's buttons at the window's top right: here, unless the rail is to the right
+        let top: Element<'_, Message> = if self.rail { drag_area(top) } else { row![drag_area(top), self.window_controls()].into() };
         if self.voice {
             return container(column![top, self.call_view()]).style(move |_| container::Style { background: Some(Background::Color(s.bg)), ..Default::default() }).into();
         }
@@ -1817,36 +1813,6 @@ impl App {
             card = card.push(folder);
         }
         card.into()
-    }
-
-    fn preview_shown(&self) -> bool {
-        self.preview_open && self.preview_url.is_some()
-    }
-
-    /// The preview pane beside the chat: the page the agent last wrote, under a bar with its name, reload, open
-    /// in the browser and close. The page itself is a native view laid over the area below the bar (preview.rs).
-    fn preview_pane(&self) -> Element<'_, Message> {
-        let s = self.skin();
-        let url = self.preview_url.as_deref().unwrap_or("");
-        let name = url.rsplit('/').next().unwrap_or(url).replace("%20", " ");
-        let bar = row![
-            icon(ic::GLOBE, 13).color(s.muted),
-            container(text(name).size(13).font(MEDIUM).color(s.text).wrapping(text::Wrapping::None)).width(Fill).clip(true),
-            icon_button(s, ic::RETRY, Message::PreviewReload),
-            icon_button(s, ic::OPEN_NEW, Message::PreviewExternal),
-            icon_button(s, ic::CANCEL, Message::PreviewClose),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .padding(Padding { top: 6.0, right: 8.0, bottom: 6.0, left: 16.0 })
-        .height(44);
-        let bar: Element<'_, Message> = if self.rail { drag_area(bar) } else { row![drag_area(bar), self.window_controls()].into() };
-        let page = canvas(PageArea).width(Fill).height(Fill);
-        container(column![bar, page])
-            .width(Fill)
-            .height(Fill)
-            .style(move |_| container::Style { background: Some(Background::Color(s.bg)), border: Border { width: 1.0, color: s.line, ..Default::default() }, ..Default::default() })
-            .into()
     }
 
     /// The message box's layout: whether it has grown past one line, and whether it holds a chip. One line,
@@ -2601,19 +2567,6 @@ struct Ring {
     frac: f32,
     track: Color,
     fill: Color,
-}
-
-/// The preview page's area: nothing is drawn here (the page's own view covers it); drawing it moves the page
-/// to wherever the layout put it.
-struct PageArea;
-
-impl<M> canvas::Program<M> for PageArea {
-    type State = ();
-
-    fn draw(&self, _: &(), _: &iced::Renderer, _: &Theme, bounds: iced::Rectangle, _: iced::mouse::Cursor) -> Vec<canvas::Geometry> {
-        crate::preview::place(bounds);
-        Vec::new()
-    }
 }
 
 /// The message box's highlighter: a /name of an installed skill, anywhere in the text, in the accent colour

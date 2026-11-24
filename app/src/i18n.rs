@@ -12,7 +12,7 @@
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
-/// Which words the app shows: English, Chinese, or whatever Windows is set to.
+/// Which words the app shows: English, Chinese, or whatever the system locale is set to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
     System,

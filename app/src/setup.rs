@@ -2,7 +2,15 @@
 //! yet, and offer models to download when the models folder is empty (the user picks; none is pushed).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+static STARTED: AtomicBool = AtomicBool::new(false);
+
+/// Whether this GUI process started the local `ghost-infer` server itself.
+pub fn we_started_server() -> bool {
+    STARTED.load(Ordering::Relaxed)
+}
 
 /// A model the first run offers, from Hugging Face.
 pub struct Offer {
@@ -102,7 +110,9 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
         args.push(stt.into());
     }
     let log = |name: &str| std::fs::File::create(data.join(name)).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
-    let _ = std::process::Command::new(server).args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log")).spawn();
+    if std::process::Command::new(server).args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log")).spawn().is_ok() {
+        STARTED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// "6.2 of 16.8 GB".

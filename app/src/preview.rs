@@ -1,16 +1,11 @@
-//! Embedded preview pane stub for Linux (pages open in the default browser instead).
+//! Desktop launcher for HTML previews, plugin panels, links, and config files on Linux.
 
-use iced::Rectangle;
-
-pub fn exists() -> bool {
-    false
+/// Opens a web URL or local config file using the desktop's default handler (`xdg-open`).
+pub fn open(target: &str) {
+    let _ = std::process::Command::new("xdg-open")
+        .arg(target)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
-
-pub fn create(_: &dyn iced::window::Window, _: &str) -> Result<(), String> {
-    Err("embedded preview is unavailable; use Open in browser".into())
-}
-
-pub fn navigate(_: &str) {}
-pub fn set_visible(_: bool) {}
-pub fn focus_app() {}
-pub fn place(_: Rectangle) {}

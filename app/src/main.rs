@@ -79,6 +79,7 @@ fn main() -> iced::Result {
             min_size: Some(iced::Size::new(560.0, 420.0)),
             decorations: false,
             icon: ghost::icon(view::GRAPHITE.accent),
+            platform_specific: iced::window::settings::PlatformSpecific { application_id: "ghost-infer".into(), ..Default::default() },
             exit_on_close_request: false,
             ..Default::default()
         })
@@ -513,7 +514,7 @@ pub fn short(v: &str) -> String {
     }
     let parts: Vec<&str> = v.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
     if parts.len() > 2 && !v.contains(' ') {
-        return format!("…\\{}", parts[parts.len() - 2..].join("\\"));
+        return format!("…/{}", parts[parts.len() - 2..].join("/"));
     }
     format!("{}…", v.chars().take(57).collect::<String>())
 }
@@ -591,7 +592,7 @@ pub enum SettingsPage {
     About,
 }
 
-/// Light or dark: Windows' own setting unless the user picked one (kept in %LOCALAPPDATA%\ghost-infer\app.json).
+/// Light or dark: the desktop's own setting unless the user picked one (kept in `$XDG_DATA_HOME/ghost-infer/app.json`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum ThemeMode {
     System,
@@ -603,7 +604,7 @@ fn app_file() -> Option<std::path::PathBuf> {
     setup::data_dir().map(|d| d.join("app.json"))
 }
 
-/// The app's own settings, kept in app.json (start-ghost-app reads load_last and last_model from it too).
+/// The app's own settings, kept in app.json.
 struct Saved {
     mode: ThemeMode,
     perm: usize,                // the permission mode (MODES)
@@ -615,7 +616,7 @@ struct Saved {
     model_dirs: Vec<String>,    // folders of models already on this computer (an installed app's server reads them)
     call_timings: bool,         // a call shows how long each reply took (Settings, Voice)
     call_model: Option<String>, // the model calls talk to (None: the Code model's)
-    lang: crate::i18n::Lang,    // the app's words: English, Chinese, or whatever Windows is set to
+    lang: crate::i18n::Lang,    // the app's words: English, Chinese, or whatever the system locale is set to
 }
 
 fn load_settings() -> Saved {
@@ -654,12 +655,7 @@ fn open_link(url: &str) {
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         return;
     }
-    let _ = std::process::Command::new("xdg-open")
-        .arg(url.trim())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    preview::open(url.trim());
 }
 
 /// Whether the desktop environment is set to dark mode.
@@ -765,7 +761,7 @@ struct App {
     finished_open: bool,     // its finished group unfolded
     proc_output: std::collections::HashMap<usize, String>, // running processes' output, while the panel shows them
     polling: bool,
-    own_server: bool,        // installed with its server (ghost-infer.exe beside it), which it starts itself
+    own_server: bool,        // whether this GUI instance started the local server itself
     model_dirs: Vec<String>, // folders of models added in the app (given to the server when it starts, and when the app connects)
     model_folders: Vec<String>, // every folder the server lists models from (its own and the app's)
     download: Json,          // a model downloading for the first run (/api/downloads)
@@ -780,8 +776,7 @@ struct App {
     nightly: Json,           // sleep training's settings and state (GET /api/nightly), for its settings page
     learned: Json,           // what it has learned: facts and nights (GET /api/nightly/learned)
     editing: Option<usize>,  // the user message being edited in the box: sending replaces it and the replies after it
-    preview_url: Option<String>, // the web page the agent last wrote, for the preview pane
-    preview_open: bool,      // the pane is shown
+    preview_url: Option<String>, // the web page or plugin panel last opened, for the top-bar button
     panels: Vec<Panel>,      // the plugins' pages: rows in the side bar under New chat
     badges: Vec<Badge>,      // the plugins' statuses, shown over every page
     badges_at: Option<u64>,  // when the badges were last asked (the clock); None while an answer is pending
@@ -921,13 +916,13 @@ enum Message {
     ProcOutput(usize, Result<Json, String>),
     Trimmed(Result<Json, String>),
     CycleMode,                // Shift+Tab, as in Claude Code
-    PickWorkdir,              // a new chat's folder, from Windows' folder dialog
+    PickWorkdir,              // a new chat's folder, from the system folder dialog
     SetWorkdir(Option<String>),
     Approve(String, &'static str), // a call's id, and "once", "always" or "deny"
     Approved(Result<Json, String>),
     Undo(usize),
     Undone(usize, Result<Json, String>),
-    // the window, which has no Windows frame
+    // frameless window controls
     DragWindow,
     ToggleMaximize,
     Minimize,
@@ -994,13 +989,7 @@ enum Message {
     ModelFolder(Option<String>),
     RemoveModelFolder(String),
     ModelFolders(Result<Json, String>), // the server's models folders, after a change
-    // the preview pane: the page's view made, and the pane's buttons
-    PreviewMade(Result<(), String>),
     PreviewOpen,
-    PreviewClose,
-    PreviewReload,
-    PreviewExternal,
-    FocusApp, // a click in the app: the keyboard comes back from the page
     // voice calls
     SetVoice(bool), // the top-left switch: Voice call (true) or Code
     PickCallModel(Option<String>), // the model calls talk to (None: the Code model's)
@@ -1105,7 +1094,7 @@ impl App {
             finished_open: true,
             proc_output: Default::default(),
             polling: false,
-            own_server: setup::own_server().is_some(),
+            own_server: false,
             model_dirs,
             download: Json::Null,
             download_polled: 0,
@@ -1121,7 +1110,6 @@ impl App {
             learned: Json::Null,
             editing: None,
             preview_url: None,
-            preview_open: false,
             panels: Vec::new(),
             badges: Vec::new(),
             badges_at: Some(0),
@@ -1169,6 +1157,7 @@ impl App {
         match message {
             Message::Connected(Ok((api, models, chats, harness))) => {
                 self.api = Some(api);
+                self.own_server = setup::we_started_server();
                 self.set_harness(&harness);
                 self.set_models(&models);
                 self.set_chats(&chats);
@@ -1854,31 +1843,11 @@ impl App {
                     );
                 }
             }
-            Message::PreviewMade(Ok(())) => {}
-            Message::PreviewMade(Err(e)) => {
-                self.preview_open = false;
-                self.status = format!("Couldn't show the page here: {e}");
-            }
             Message::PreviewOpen => {
                 if let Some(url) = self.preview_url.clone() {
-                    return self.show_preview(url);
+                    self.show_preview(url, true);
                 }
             }
-            Message::PreviewClose => {
-                self.preview_open = false;
-                preview::set_visible(false);
-            }
-            Message::PreviewReload => {
-                if let Some(url) = &self.preview_url {
-                    preview::navigate(url);
-                }
-            }
-            Message::PreviewExternal => {
-                if let Some(url) = &self.preview_url {
-                    open_link(url);
-                }
-            }
-            Message::FocusApp => preview::focus_app(),
             // back in Code mode: the Code model with its whole memory, if a call took it
             Message::SetVoice(on) => {
                 self.voice = on;
@@ -2208,7 +2177,7 @@ impl App {
             Message::OpenPanel(path) => {
                 if let Some(api) = &self.api {
                     let url = format!("http://{}{path}", api.addr);
-                    return self.show_preview(url);
+                    self.show_preview(url, true);
                 }
             }
             Message::McpReload => {
@@ -2217,14 +2186,14 @@ impl App {
             Message::McpImport => {
                 return self.call(|api| { api.post("/api/mcp/import-claude", &Json::Null)?; std::thread::sleep(std::time::Duration::from_millis(500)); api.get("/api/mcp") }, Message::Mcp);
             }
-            // mcp.json in Notepad; Reload picks the changes up
+            // mcp.json in the default editor; Reload picks the changes up
             Message::Instructions(Ok(j)) => {
                 self.instructions = j.get("files").and_then(Json::as_array).unwrap_or(&[]).iter().filter_map(|f| {
                     Some((f.get("path")?.as_str()?.to_string(), f.get("exists").and_then(Json::as_bool).unwrap_or(false), f.get("scope").and_then(Json::as_str) == Some("global")))
                 }).collect();
             }
             Message::Instructions(Err(_)) => {}
-            // opened in Notepad, made first when missing (the model reads it at its next reply)
+            // opened in the default editor, made first when missing (the model reads it at its next reply)
             Message::EditInstructions(path) => {
                 let file = std::path::Path::new(&path);
                 if !file.exists() {
@@ -2234,12 +2203,12 @@ impl App {
                         return Task::none();
                     }
                 }
-                let _ = std::process::Command::new("notepad").arg(file).spawn();
+                preview::open(&path);
                 return self.refresh_instructions();
             }
             Message::McpEdit => {
                 if !self.mcp_config.is_empty() {
-                    let _ = std::process::Command::new("notepad").arg(&self.mcp_config).spawn();
+                    preview::open(&self.mcp_config);
                 }
             }
             Message::Forget(i) => {
@@ -2649,14 +2618,7 @@ impl App {
         } else {
             iced::Subscription::none()
         };
-        // a click in the app's own area takes the keyboard back from the preview page (a click in the page goes
-        // to the page, not here)
-        let clicks = if preview::exists() {
-            iced::event::listen_with(|e, _, _| matches!(e, iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))).then_some(Message::FocusApp))
-        } else {
-            iced::Subscription::none()
-        };
-        // the tray icon, a second start of the app, and Alt+F4 (which hides the window as the X does)
+        // close request from window button / WM
         let close = iced::window::close_requests().map(|_| Message::CloseWindow);
         // the Voice call view: the orb steps a dozen times a second (its mouth and level need more than the clock)
         let orb = if self.voice {
@@ -2678,27 +2640,18 @@ impl App {
             iced::Event::Window(iced::window::Event::FileDropped(path)) => Some(Message::FilesChosen(vec![path])),
             _ => None,
         });
-        iced::Subscription::batch([tick, resized, keys, clicks, close, orb, drops])
+        iced::Subscription::batch([tick, resized, keys, close, orb, drops])
     }
 
-    /// Shows a web page in the preview pane, making the pane's view the first time (on the window's thread).
-    fn show_preview(&mut self, url: String) -> Task<Message> {
+    /// Opens a generated web page or plugin panel in the default browser (avoiding duplicate tabs on edits).
+    fn show_preview(&mut self, url: String, always_open: bool) {
         if url.is_empty() {
-            return Task::none();
+            return;
         }
-        self.preview_url = Some(url.clone());
-        self.preview_open = true;
-        if preview::exists() {
-            preview::set_visible(true);
-            preview::navigate(&url);
-            return Task::none();
+        if always_open || self.preview_url.as_deref() != Some(url.as_str()) {
+            open_link(&url);
         }
-        iced::window::latest()
-            .and_then(move |id| {
-                let url = url.clone();
-                iced::window::run(id, move |w| preview::create(w, &url))
-            })
-            .map(Message::PreviewMade)
+        self.preview_url = Some(url);
     }
 
     /// A task list with every step done leaves the pin above the message box: it goes into the latest reply,
@@ -2964,7 +2917,7 @@ impl App {
         let kind = ev.get("type").and_then(Json::as_str).unwrap_or("");
         let s = |k: &str| ev.get(k).and_then(Json::as_str).unwrap_or("").to_string();
         match kind {
-            "preview" => return self.show_preview(s("url")),
+            "preview" => self.show_preview(s("url"), false),
             // the model is replying in another chat: this one goes next
             "waiting" => self.status = s("text"),
             "chat" => {
