@@ -33,29 +33,72 @@ use json::{num, obj, str, Json};
 /// app's main memory cost, so it stays bounded however long a chat gets).
 pub const SHOWN: usize = 30;
 
-/// Command line: `ghost-app [host:port] [--open <chat id>] [--send <message>] [--menu plus|chat|settings|skill-link] [--call]`
-/// (the last four for testing; --call opens the Voice call mode and starts a call).
+/// Command line: `ghost-app [host:port | <model.gguf>] [--port <n>] [--gpu] [--open <chat id>] [--send <message>] [--menu plus|chat|settings|skill-link] [--call]`
 #[derive(Debug, Clone, Default)]
 struct Args {
     addr: String,
+    model: Option<std::path::PathBuf>,
+    server_args: Vec<String>,
     open: Option<String>,
     send: Option<String>,
     menu: Option<String>,
     call: bool,
 }
 
-fn main() -> iced::Result {
+const APP_USAGE: &str = "USAGE: ghost-app [host:port | <model.gguf>] [--port <n>] [--gpu] [--ctx <n>] [--kv <f16|int8|q4>] [--ram-floor <GB>] [--threads <n>] [--no-think] [--models <dir>] [--open <chat>] [--send <text>] [--menu plus|model|mode|chat|settings|tasks|skill-link] [--call]";
+
+fn parse_args<I: IntoIterator<Item = String>>(iter: I) -> Result<Args, Option<String>> {
     let mut args = Args { addr: "127.0.0.1:8080".into(), ..Default::default() };
-    let mut it = std::env::args().skip(1);
+    let mut it = iter.into_iter().skip(1).peekable();
+    if it.peek().is_some_and(|a| a == "serve") {
+        it.next();
+    }
+    let need = |it: &mut std::iter::Peekable<std::iter::Skip<I::IntoIter>>, flag: &str| -> Result<String, Option<String>> {
+        it.next().ok_or_else(|| Some(format!("error: {flag} needs a value")))
+    };
     while let Some(a) = it.next() {
         match a.as_str() {
-            "--open" => args.open = it.next(),
-            "--send" => args.send = it.next(),
-            "--menu" => args.menu = it.next(),
+            "-h" | "--help" => return Err(None),
+            "--open" => args.open = Some(need(&mut it, "--open")?),
+            "--send" => args.send = Some(need(&mut it, "--send")?),
+            "--menu" => args.menu = Some(need(&mut it, "--menu")?),
             "--call" => args.call = true,
-            _ => args.addr = a,
+            "--port" => {
+                let p = need(&mut it, "--port")?;
+                let n: u16 = p.parse().map_err(|_| Some(format!("error: --port: {p:?} is not a port")))?;
+                args.addr = format!("127.0.0.1:{n}");
+            }
+            "--gpu" => {}
+            "--no-think" => args.server_args.push(a),
+            "--ctx" | "--kv" | "--ram-floor" | "--threads" | "--models" => {
+                let v = need(&mut it, &a)?;
+                args.server_args.push(a);
+                args.server_args.push(v);
+            }
+            _ if a.to_ascii_lowercase().ends_with(".gguf") => {
+                let p = std::path::PathBuf::from(&a);
+                args.model = Some(std::fs::canonicalize(&p).unwrap_or(p));
+            }
+            _ if a.starts_with('-') => return Err(Some(format!("error: unknown option {a}"))),
+            _ if a.contains(':') => args.addr = if a.starts_with(':') { format!("127.0.0.1{a}") } else { a },
+            _ => return Err(Some(format!("error: unexpected argument {a} (expected host:port or <model.gguf>)"))),
         }
     }
+    Ok(args)
+}
+
+fn main() -> iced::Result {
+    let args = match parse_args(std::env::args()) {
+        Ok(a) => a,
+        Err(msg) => {
+            if let Some(m) = msg {
+                eprintln!("{m}\n{APP_USAGE}");
+                std::process::exit(2);
+            }
+            println!("{APP_USAGE}");
+            std::process::exit(0);
+        }
+    };
     iced::application(move || App::new(args.clone()), App::update, App::view)
         .subscription(App::subscription)
         .title(|app: &App| match &app.title {
@@ -1008,7 +1051,7 @@ impl App {
         let addr = args.addr.clone();
         let Saved { mode, perm, workdir, rail, rail_open, load_last, last_model, model_dirs, call_timings, call_model, lang } = load_settings();
         // an installed app starts its own server (with the last model if it is set to), as the launcher does
-        let launch = (model_dirs.clone(), if load_last { last_model.clone() } else { None });
+        let launch = (model_dirs.clone(), if load_last { last_model.clone() } else { None }, args.model.clone(), args.server_args.clone());
         let dark = match mode {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
@@ -1140,7 +1183,7 @@ impl App {
             call_started: None,
         };
         let connecting = blocking(move || {
-            setup::start_server(&addr, &launch.0, launch.1.as_deref());
+            setup::start_server(&addr, &launch.0, launch.1.as_deref(), launch.2.as_deref(), &launch.3);
             connect(&addr)
         });
         (app, Task::perform(connecting, Message::Connected))
@@ -1218,8 +1261,12 @@ impl App {
                 }
                 return system;
             }
-            // the server not up yet (the launcher starts both at once): try again in a moment
+            // the server not up yet (the launcher starts both at once): try again unless it exited with an error
             Message::Connected(Err(_)) => {
+                if let Some(err) = setup::server_exit_error() {
+                    self.status = err;
+                    return Task::none();
+                }
                 let addr = self.start.addr.clone();
                 self.status = format!("Waiting for ghost-infer at {addr}…");
                 return Task::perform(
@@ -3118,4 +3165,31 @@ fn connect(addr: &str) -> Result<(Api, Json, Json, Json), String> {
     let chats = api.get("/api/chats")?;
     let harness = api.get("/api/harness").unwrap_or(Json::Null);
     Ok((api, models, chats, harness))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_args;
+    use std::path::PathBuf;
+
+    fn parse(v: &[&str]) -> Result<super::Args, Option<String>> {
+        parse_args(v.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn cli_args_accept_model_and_gpu_without_corrupting_addr() {
+        let a = parse(&["ghost-app", "./Qwen3.6.gguf", "--gpu"]).unwrap();
+        assert_eq!(a.addr, "127.0.0.1:8080");
+        assert_eq!(a.model, Some(PathBuf::from("./Qwen3.6.gguf")));
+
+        let b = parse(&["ghost-app", "serve", "./a.gguf", "--gpu", "--port", "9090", "--ctx", "8192", "--no-think"]).unwrap();
+        assert_eq!(b.addr, "127.0.0.1:9090");
+        assert_eq!(b.model, Some(PathBuf::from("./a.gguf")));
+        assert_eq!(b.server_args, vec!["--ctx", "8192", "--no-think"]);
+
+        assert_eq!(parse(&["ghost-app", ":8081"]).unwrap().addr, "127.0.0.1:8081");
+        assert!(matches!(parse(&["ghost-app", "--unknown"]), Err(Some(_))));
+        assert!(matches!(parse(&["ghost-app", "--port", "abc"]), Err(Some(_))));
+        assert!(matches!(parse(&["ghost-app", "--help"]), Err(None)));
+    }
 }

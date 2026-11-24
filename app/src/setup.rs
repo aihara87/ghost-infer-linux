@@ -1,15 +1,30 @@
 //! What an installed app does on its own: start its server (`ghost-infer` beside it) when nothing answers
 //! yet, and offer models to download when the models folder is empty (the user picks; none is pushed).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 static STARTED: AtomicBool = AtomicBool::new(false);
+static CHILD: Mutex<Option<Child>> = Mutex::new(None);
 
 /// Whether this GUI process started the local `ghost-infer` server itself.
 pub fn we_started_server() -> bool {
     STARTED.load(Ordering::Relaxed)
+}
+
+/// If the server spawned by this app exited before connecting, returns the reason from `server.log`.
+pub fn server_exit_error() -> Option<String> {
+    let mut guard = CHILD.lock().ok()?;
+    let child = guard.as_mut()?;
+    let status = child.try_wait().ok()??;
+    *guard = None;
+    let tail = data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("server.log")).ok())
+        .and_then(|s| s.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()));
+    Some(tail.unwrap_or_else(|| format!("ghost-infer exited ({status})")))
 }
 
 /// A model the first run offers, from Hugging Face.
@@ -71,9 +86,9 @@ pub fn listening(addr: &str) -> bool {
     addr.to_socket_addrs().ok().and_then(|mut a| a.next()).is_some_and(|a| std::net::TcpStream::connect_timeout(&a, Duration::from_millis(300)).is_ok())
 }
 
-/// Starts the server beside this program, without a window, if nothing answers at `addr` yet: the models
-/// folder and `extra` folders, and the last picked model if the app is set to start with it.
-pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
+/// Starts the server beside this program, without a window, if nothing answers at `addr` yet: `model` (if
+/// passed on the CLI) or `last` picked model, the models folder and `extra` folders.
+pub fn start_server(addr: &str, extra: &[String], last: Option<&str>, model: Option<&Path>, extra_args: &[String]) {
     let (Some(server), Some(data), Some(models)) = (own_server(), data_dir(), models_dir()) else { return };
     if listening(addr) {
         return;
@@ -81,16 +96,28 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
     let _ = std::fs::create_dir_all(&models);
     let port = addr.rsplit(':').next().unwrap_or("8080").to_string();
     let mut dirs = vec![models];
-    dirs.extend(extra.iter().map(PathBuf::from));
+    for d in extra.iter().map(PathBuf::from).chain(model.and_then(|p| p.parent().filter(|p| !p.as_os_str().is_empty()).map(Path::to_path_buf))) {
+        if !dirs.contains(&d) {
+            dirs.push(d);
+        }
+    }
     let mut args: Vec<std::ffi::OsString> = vec!["serve".into()];
-    if let Some(path) = last.and_then(|id| dirs.iter().map(|d| d.join(format!("{id}.gguf"))).find(|p| p.exists())) {
+    if let Some(path) = model.map(Path::to_path_buf).or_else(|| last.and_then(|id| dirs.iter().map(|d| d.join(format!("{id}.gguf"))).find(|p| p.exists()))) {
         args.push(path.into());
     }
-    // 64K: the context's memory is taken only as a chat grows (from the experts kept on the GPU), and 32K left a
-    // skill, a web page and its rewrite compacting round after round
-    // --kv q4: a 4-bit cache for 256-wide heads (Qwen3.5 / 3.6 / 3.8; a 27B on 8 GB gets about half as much again
-    // context); other models keep int8
-    for a in ["--gpu", "--ctx", "65536", "--kv", "q4", "--port", &port] {
+    let has = |flag: &str| extra_args.iter().any(|a| a == flag);
+    args.push("--gpu".into());
+    if !has("--ctx") {
+        args.push("--ctx".into());
+        args.push("65536".into());
+    }
+    if !has("--kv") {
+        args.push("--kv".into());
+        args.push("q4".into());
+    }
+    args.push("--port".into());
+    args.push(port.into());
+    for a in extra_args {
         args.push(a.into());
     }
     for d in &dirs {
@@ -110,8 +137,11 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
         args.push(stt.into());
     }
     let log = |name: &str| std::fs::File::create(data.join(name)).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
-    if std::process::Command::new(server).args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log")).spawn().is_ok() {
+    if let Ok(child) = std::process::Command::new(server).args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log")).spawn() {
         STARTED.store(true, Ordering::Relaxed);
+        if let Ok(mut g) = CHILD.lock() {
+            *g = Some(child);
+        }
     }
 }
 
