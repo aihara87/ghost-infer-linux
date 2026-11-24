@@ -380,13 +380,31 @@ impl Msg {
     }
 }
 
-/// A reply's thinking (inside <think>...</think> at its start) and its answer.
+/// A reply's thinking (inside <think>...</think> at its start) and its visible answer.
 fn split_think(raw: &str) -> (&str, &str) {
-    let t = raw.trim_start();
-    let Some(rest) = t.strip_prefix("<think>") else { return ("", raw) };
+    let mut t = raw.trim_start();
+    let Some(rest) = t.strip_prefix("<think>") else { return ("", strip_think_tags(raw)) };
     match rest.find("</think>") {
-        Some(end) => (rest[..end].trim(), rest[end + 8..].trim_start()),
-        None => (rest.trim(), ""),
+        Some(end) => {
+            let think = rest[..end].trim_start();
+            let think = think.strip_prefix("<think>").unwrap_or(think).trim();
+            (think, strip_think_tags(&rest[end + 8..]))
+        }
+        None => {
+            t = rest.strip_prefix("<think>").unwrap_or(rest).trim();
+            (t, "")
+        }
+    }
+}
+
+fn strip_think_tags(mut s: &str) -> &str {
+    loop {
+        let t = s.trim_start();
+        if let Some(rest) = t.strip_prefix("</think>").or_else(|| t.strip_prefix("<think>")) {
+            s = rest;
+        } else {
+            return t;
+        }
     }
 }
 
@@ -3191,5 +3209,8 @@ mod tests {
         assert!(matches!(parse(&["ghost-app", "--unknown"]), Err(Some(_))));
         assert!(matches!(parse(&["ghost-app", "--port", "abc"]), Err(Some(_))));
         assert!(matches!(parse(&["ghost-app", "--help"]), Err(None)));
+
+        assert_eq!(super::split_think("<think>\n<think>\n</think>\n\n</think>\n\n</think>\n\n"), ("", ""));
+        assert_eq!(super::split_think("<think>\nhi\n</think>\n\nhello"), ("hi", "hello"));
     }
 }

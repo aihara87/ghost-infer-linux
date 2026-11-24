@@ -2189,7 +2189,7 @@ impl App {
                         .style(move |_, _| button::Style { background: None, ..Default::default() })
                         .into(),
                 );
-                if r.think_open {
+                if r.think_open || (!live && r.answer.is_empty() && m.tools.is_empty()) {
                     parts.push(container(crate::select::text(r.think.as_str()).size(13.5).color(s.muted).line_height(1.55).width(Fill)).padding(Padding { left: 14.0, ..Padding::ZERO }).into());
                 }
             }
@@ -2216,7 +2216,10 @@ impl App {
         if !m.plan.is_empty() {
             parts.push(self.finished_plan(&m.plan));
         }
-        if !live && (m.rounds.iter().any(|r| !r.answer.is_empty()) || m.changed) {
+        if !live && m.tools.is_empty() && m.writing.is_none() && m.rounds.iter().all(|r| r.answer.is_empty() && r.think.is_empty()) {
+            parts.push(text(crate::tf!("(empty reply)", "（无回复内容）")).size(13).color(s.faint).into());
+        }
+        if !live && (!m.rounds.is_empty() || m.changed) {
             let mut foot = row![tip_button(s, ic::COPY, tr("Copy"), Message::Copy(i))].spacing(2).align_y(Alignment::Center);
             // any reply can be answered again (an earlier one: what came after it goes)
             if self.busy.is_none() {

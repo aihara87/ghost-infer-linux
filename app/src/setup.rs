@@ -113,7 +113,7 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>, model: Opt
     }
     if !has("--kv") {
         args.push("--kv".into());
-        args.push("q4".into());
+        args.push("int8".into());
     }
     args.push("--port".into());
     args.push(port.into());
