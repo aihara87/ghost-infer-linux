@@ -4953,20 +4953,77 @@ mod os {
 
 #[cfg(not(windows))]
 mod os {
-    use std::ffi::c_void;
-    pub fn open(_: &str) -> Option<*mut c_void> {
-        None
+    use std::ffi::{CString, c_void};
+    use std::sync::OnceLock;
+
+    #[cfg_attr(target_os = "linux", link(name = "dl"))]
+    unsafe extern "C" {
+        fn dlopen(name: *const i8, flags: i32) -> *mut c_void;
+        fn dlsym(lib: *mut c_void, name: *const i8) -> *mut c_void;
+        fn madvise(addr: *mut c_void, len: usize, advice: i32) -> i32;
+        fn getrusage(who: i32, usage: *mut isize) -> i32;
+        fn sysconf(name: i32) -> isize;
     }
-    pub fn symbol(_: *mut c_void, _: &str) -> Option<*mut c_void> {
-        None
+
+    fn page_size() -> usize {
+        static PG: OnceLock<usize> = OnceLock::new();
+        *PG.get_or_init(|| unsafe { sysconf(30 /* _SC_PAGESIZE */) }.max(4096) as usize)
     }
-    pub fn prefetch(_: &[(usize, usize)]) {}
-    pub fn release(_: &[(usize, usize)]) {}
+
+    pub fn open(path: &str) -> Option<*mut c_void> {
+        let c = CString::new(path).ok()?;
+        let h = unsafe { dlopen(c.as_ptr(), 2 /* RTLD_NOW */) };
+        (!h.is_null()).then_some(h)
+    }
+
+    pub fn symbol(lib: *mut c_void, name: &str) -> Option<*mut c_void> {
+        let c = CString::new(name).ok()?;
+        let p = unsafe { dlsym(lib, c.as_ptr()) };
+        (!p.is_null()).then_some(p)
+    }
+
+    pub fn prefetch(ranges: &[(usize, usize)]) {
+        let pg = page_size();
+        for &(a, n) in ranges {
+            if n == 0 {
+                continue;
+            }
+            let start = a & !(pg - 1);
+            let end = a.saturating_add(n).saturating_add(pg - 1) & !(pg - 1);
+            if end > start {
+                unsafe { madvise(start as *mut c_void, end - start, 3 /* MADV_WILLNEED */) };
+            }
+        }
+    }
+
+    pub fn release(ranges: &[(usize, usize)]) {
+        let pg = page_size();
+        for &(a, n) in ranges {
+            let start = a.saturating_add(pg - 1) & !(pg - 1);
+            let end = a.saturating_add(n) & !(pg - 1);
+            if end > start {
+                // MADV_PAGEOUT (Linux 5.4+) reclaims pages without discarding anonymous content; keep full-page bounds so neighbors stay resident
+                unsafe { madvise(start as *mut c_void, end - start, 21 /* MADV_PAGEOUT */) };
+            }
+        }
+    }
+
     pub fn available_ram() -> u64 {
-        u64::MAX // the RAM floor is Windows-only for now
+        crate::sysinfo::available_ram().unwrap_or(u64::MAX)
     }
+
     pub fn page_faults() -> (u64, u64) {
-        (0, 0)
+        let mut ru = [0isize; 18]; // sizeof(struct rusage) == 144 on x86_64
+        let faults = if unsafe { getrusage(0 /* RUSAGE_SELF */, ru.as_mut_ptr()) } == 0 {
+            (ru[8].max(0) + ru[9].max(0)) as u64
+        } else {
+            0
+        };
+        let ws = std::fs::read_to_string("/proc/self/statm")
+            .ok()
+            .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
+            .map_or(0, |pages| pages * page_size() as u64);
+        (faults, ws)
     }
 }
 
@@ -5074,7 +5131,10 @@ fn find_nvrtc() -> Option<String> {
     }
     let is_nvrtc = |p: &std::path::Path| {
         let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        n.starts_with("nvrtc64_") && n.ends_with(".dll") && !n.contains(".alt")
+        #[cfg(windows)]
+        return n.starts_with("nvrtc64_") && n.ends_with(".dll") && !n.contains(".alt");
+        #[cfg(not(windows))]
+        return (n == "libnvrtc.so" || n.starts_with("libnvrtc.so.")) && !n.contains(".alt");
     };
     let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf()));
     if let Some(p) = beside.and_then(|d| std::fs::read_dir(d).ok()).and_then(|d| d.flatten().map(|e| e.path()).filter(|p| is_nvrtc(p)).max()) {
@@ -5083,10 +5143,20 @@ fn find_nvrtc() -> Option<String> {
     let mut roots = Vec::new();
     if let Ok(p) = std::env::var("CUDA_PATH") {
         roots.push(std::path::PathBuf::from(&p));
+        #[cfg(windows)]
         roots.push(std::path::PathBuf::from(&p).join("bin"));
+        #[cfg(not(windows))]
+        roots.push(std::path::PathBuf::from(&p).join("lib64"));
     }
+    #[cfg(windows)]
     if let Ok(dirs) = std::fs::read_dir(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA") {
         roots.extend(dirs.flatten().map(|d| d.path().join("bin")));
+    }
+    #[cfg(not(windows))]
+    {
+        for dir in ["/opt/cuda/lib64", "/usr/local/cuda/lib64", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"] {
+            roots.push(std::path::PathBuf::from(dir));
+        }
     }
     let mut found: Vec<std::path::PathBuf> = roots
         .iter()
@@ -5095,13 +5165,20 @@ fn find_nvrtc() -> Option<String> {
         .filter(|p| is_nvrtc(p))
         .collect();
     found.sort();
-    found.pop().map(|p| p.to_string_lossy().into_owned())
+    #[cfg(windows)]
+    return found.pop().map(|p| p.to_string_lossy().into_owned());
+    #[cfg(not(windows))]
+    return found.pop().map(|p| p.to_string_lossy().into_owned()).or_else(|| Some("libnvrtc.so".into()));
 }
 
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
-        let cuda = os::open("nvcuda.dll").ok_or("no NVIDIA driver (nvcuda.dll) found")?;
+        #[cfg(windows)]
+        let cuda_lib = "nvcuda.dll";
+        #[cfg(not(windows))]
+        let cuda_lib = "libcuda.so.1";
+        let cuda = os::open(cuda_lib).ok_or_else(|| format!("no NVIDIA driver ({cuda_lib}) found"))?;
         let nvrtc_path = find_nvrtc().ok_or("no NVRTC found (install the CUDA toolkit or set GHOST_INFER_NVRTC)")?;
         let nvrtc = os::open(&nvrtc_path).ok_or_else(|| format!("cannot load {nvrtc_path}"))?;
         let f = Fns::load(cuda, nvrtc)?;
@@ -5517,7 +5594,7 @@ impl Kernels {
             format!("{:016x}", h.finish())
         };
         let use_cache = std::env::var_os("GHOST_INFER_NO_KERNEL_CACHE").is_none();
-        let dir = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("ghost-infer").join("kernels"));
+        let dir = crate::sysinfo::data_dir().map(|d| d.join("kernels"));
         let file = dir.as_ref().map(|d| d.join(format!("{key}.cubin")));
         if let (true, Some(file)) = (use_cache, &file) {
             if let Ok(bin) = std::fs::read(file) {

@@ -929,7 +929,7 @@ fn fitted_prompt(out: &mut Out, req: &Request, chat: &mut Chat, tools: &[Json], 
 
 /// %LOCALAPPDATA%\ghost-infer, made if missing.
 pub(super) fn data_dir() -> Result<PathBuf, String> {
-    let d = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer")).ok_or("LOCALAPPDATA is not set")?;
+    let d = crate::sysinfo::data_dir_or_err()?;
     std::fs::create_dir_all(&d).map_err(|e| format!("cannot make {}: {e}", d.display()))?;
     Ok(d)
 }
@@ -1266,7 +1266,7 @@ pub fn answer(id: &str, decision: &str) -> bool {
 // ---- the chat store
 
 fn chats_dir() -> Result<PathBuf, String> {
-    let d = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer").join("chats")).ok_or("LOCALAPPDATA is not set")?;
+    let d = data_dir()?.join("chats");
     std::fs::create_dir_all(&d).map_err(|e| format!("cannot make {}: {e}", d.display()))?;
     Ok(d)
 }
@@ -2447,7 +2447,7 @@ fn call(out: &mut Out, id: &str, name: &str, arguments: &str, chat: &Chat, reply
 /// browser's own program, given an address or an .html file), if it is one.
 fn browser_target(command: &str) -> Option<String> {
     let low = command.to_ascii_lowercase();
-    const OPENERS: [&str; 14] = ["start ", "start-process", "saps ", "invoke-item", "ii ", "explorer", "msedge", "chrome", "firefox", "opera", "brave", "webbrowser", "url.dll", "process]::start"];
+    const OPENERS: [&str; 15] = ["start ", "start-process", "saps ", "invoke-item", "ii ", "explorer", "xdg-open", "msedge", "chrome", "firefox", "opera", "brave", "webbrowser", "url.dll", "process]::start"];
     if !OPENERS.iter().any(|o| low.starts_with(o) || low.contains(&format!(" {o}")) || low.contains(&format!(";{o}")) || low.contains(&format!("&{o}")) || low.contains(&format!("({o}")) || low.contains(&format!("\\{o}")) || low.contains(&format!("/{o}")) || o.contains('.') && low.contains(o) || o.contains(']') && low.contains(o)) {
         return None;
     }

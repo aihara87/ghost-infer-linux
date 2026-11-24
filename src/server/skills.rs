@@ -14,7 +14,7 @@ pub struct Skill {
 }
 
 fn root() -> Result<PathBuf, String> {
-    let d = crate::tools::skills_dir().ok_or("LOCALAPPDATA is not set")?;
+    let d = crate::sysinfo::data_dir_or_err()?.join("skills");
     std::fs::create_dir_all(&d).map_err(|e| format!("cannot make {}: {e}", d.display()))?;
     Ok(d)
 }

@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use crate::json::{obj, str, Json};
 
 pub fn dir() -> Result<PathBuf, String> {
-    let d = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer").join("plugins")).ok_or("LOCALAPPDATA is not set")?;
+    let d = crate::sysinfo::data_dir_or_err()?.join("plugins");
     std::fs::create_dir_all(&d).map_err(|e| format!("cannot make {}: {e}", d.display()))?;
     Ok(d)
 }
@@ -62,10 +62,15 @@ fn enabled(m: &Json) -> bool {
     m.get("enabled").and_then(Json::as_bool) != Some(false)
 }
 
-/// The Windows launcher for Python 3 (py.exe), which finds a real Python where "python" may be the Store's stub.
+/// The Python 3 command (`py.exe` on Windows, `python3` elsewhere).
 pub fn py_launcher() -> Option<PathBuf> {
-    let p = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("py.exe"))?;
-    p.is_file().then_some(p)
+    #[cfg(windows)]
+    {
+        let p = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("py.exe"))?;
+        p.is_file().then_some(p)
+    }
+    #[cfg(not(windows))]
+    Some(PathBuf::from("python3"))
 }
 
 /// The enabled plugins as MCP server settings (mcp.rs starts them): run in the plugin's folder, and Python
@@ -91,7 +96,9 @@ fn server(dir: &Path, m: &Json) -> Option<Json> {
         Some(file) => ("python".to_string(), vec![str(&runner()?.display().to_string()), str(file)]),
         None => (m.get("command").and_then(Json::as_str)?.to_string(), m.get("args").and_then(Json::as_array).unwrap_or(&[]).to_vec()),
     };
-    let (mut command, mut args) = (command, args);
+    let mut command = command;
+    #[cfg(windows)]
+    let mut args = args;
     let mut env: Vec<(String, Json)> = match m.get("env") {
         Some(Json::Obj(f)) => f.clone(),
         _ => Vec::new(),
@@ -99,6 +106,7 @@ fn server(dir: &Path, m: &Json) -> Option<Json> {
     if matches!(command.to_lowercase().as_str(), "python" | "python3" | "python.exe" | "py") {
         if let Some(py) = py_launcher() {
             command = py.display().to_string();
+            #[cfg(windows)]
             args.insert(0, str("-3"));
         }
         env.push(("PYTHONUNBUFFERED".into(), str("1")));
@@ -504,7 +512,9 @@ fn python_error(d: &Path) -> Option<String> {
         return None;
     }
     let mut cmd = std::process::Command::new(py);
-    cmd.arg("-3").arg("-c").arg(CHECK).args(&files).current_dir(d);
+    #[cfg(windows)]
+    cmd.arg("-3");
+    cmd.arg("-c").arg(CHECK).args(&files).current_dir(d);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

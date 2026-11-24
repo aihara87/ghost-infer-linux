@@ -55,7 +55,39 @@ fn offset_ms() -> i64 {
     ((ms(&l) - ms(&u)) as f64 / 60_000.0).round() as i64 * 60_000
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn offset_ms() -> i64 {
+    #[repr(C)]
+    #[derive(Default)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: isize,
+        zone: *const i8,
+    }
+    unsafe extern "C" {
+        fn time(t: *mut isize) -> isize;
+        fn localtime_r(timep: *const isize, result: *mut Tm) -> *mut Tm;
+    }
+    let mut now = 0isize;
+    let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() };
+    unsafe {
+        time(&mut now);
+        if localtime_r(&now, &mut tm).is_null() {
+            return 0;
+        }
+    }
+    tm.gmtoff as i64 * 1000
+}
+
+#[cfg(not(any(windows, unix)))]
 fn offset_ms() -> i64 {
     0
 }

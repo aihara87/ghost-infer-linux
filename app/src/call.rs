@@ -426,7 +426,7 @@ fn transcribe(api: &Api, audio: &[f32]) -> Result<String, String> {
 /// A turn's timings, added to %LOCALAPPDATA%\ghost-infer\call-times.log.
 fn log_times(line: &str) {
     use std::io::Write;
-    let Some(dir) = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("ghost-infer")) else { return };
+    let Some(dir) = crate::setup::data_dir() else { return };
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("call-times.log")) {
         let _ = writeln!(f, "{line}");

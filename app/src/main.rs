@@ -1,7 +1,7 @@
 //! ghost-infer's native desktop app: a light window (drawn on the CPU, no GPU memory) onto the local
 //! ghost-infer server. The server runs the model and the agent loop and keeps the chats; this shows them.
 
-#![windows_subsystem = "windows"]
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod api;
 mod attach;
@@ -86,6 +86,7 @@ fn main() -> iced::Result {
             min_size: Some(iced::Size::new(560.0, 420.0)),
             decorations: false,
             icon: ghost::icon(view::GRAPHITE.accent),
+            #[cfg(windows)]
             platform_specific: iced::window::settings::PlatformSpecific { undecorated_shadow: true, ..Default::default() },
             // Alt+F4 hides it to the tray as the X does; the tray's menu quits
             exit_on_close_request: false,
@@ -609,7 +610,7 @@ enum ThemeMode {
 }
 
 fn app_file() -> Option<std::path::PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("ghost-infer").join("app.json"))
+    setup::data_dir().map(|d| d.join("app.json"))
 }
 
 /// The app's own settings, kept in app.json (start-ghost-app reads load_last and last_model from it too).
@@ -658,35 +659,78 @@ fn load_settings() -> Saved {
 }
 
 /// A link from a reply, in the default browser. Only web links: a reply could link to a program or a file.
-/// Handed to Windows as it is (ShellExecuteW): `cmd /C start` would run whatever follows an & in it.
 fn open_link(url: &str) {
     let lower = url.trim().to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
         return;
     }
-    #[link(name = "shell32")]
-    unsafe extern "system" {
-        fn ShellExecuteW(hwnd: isize, op: *const u16, file: *const u16, params: *const u16, dir: *const u16, show: i32) -> isize;
+    #[cfg(windows)]
+    {
+        #[link(name = "shell32")]
+        unsafe extern "system" {
+            fn ShellExecuteW(hwnd: isize, op: *const u16, file: *const u16, params: *const u16, dir: *const u16, show: i32) -> isize;
+        }
+        const SW_SHOWNORMAL: i32 = 1;
+        let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (op, file) = (w("open"), w(url.trim()));
+        unsafe { ShellExecuteW(0, op.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
     }
-    const SW_SHOWNORMAL: i32 = 1;
-    let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-    let (op, file) = (w("open"), w(url.trim()));
-    unsafe { ShellExecuteW(0, op.as_ptr(), file.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) };
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(url.trim())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+    }
 }
 
-/// Whether Windows is set to dark mode for apps (HKCU\...\Personalize\AppsUseLightTheme = 0).
-fn windows_dark() -> bool {
-    #[link(name = "advapi32")]
-    unsafe extern "system" {
-        fn RegGetValueW(key: isize, sub: *const u16, value: *const u16, flags: u32, kind: *mut u32, data: *mut u32, len: *mut u32) -> i32;
+/// Whether the system is set to dark mode for apps.
+fn system_dark() -> bool {
+    #[cfg(windows)]
+    {
+        #[link(name = "advapi32")]
+        unsafe extern "system" {
+            fn RegGetValueW(key: isize, sub: *const u16, value: *const u16, flags: u32, kind: *mut u32, data: *mut u32, len: *mut u32) -> i32;
+        }
+        const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+        const RRF_RT_REG_DWORD: u32 = 0x10;
+        let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let (sub, value) = (w(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"), w("AppsUseLightTheme"));
+        let (mut data, mut len) = (1u32, 4u32);
+        let r = unsafe { RegGetValueW(HKEY_CURRENT_USER, sub.as_ptr(), value.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), &mut data, &mut len) };
+        r == 0 && data == 0
     }
-    const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
-    const RRF_RT_REG_DWORD: u32 = 0x10;
-    let w = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-    let (sub, value) = (w(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"), w("AppsUseLightTheme"));
-    let (mut data, mut len) = (1u32, 4u32);
-    let r = unsafe { RegGetValueW(HKEY_CURRENT_USER, sub.as_ptr(), value.as_ptr(), RRF_RT_REG_DWORD, std::ptr::null_mut(), &mut data, &mut len) };
-    r == 0 && data == 0
+    #[cfg(not(windows))]
+    {
+        if std::env::var("GTK_THEME").is_ok_and(|t| t.to_ascii_lowercase().contains("dark")) {
+            return true;
+        }
+        let cfg = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|d| !d.is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").filter(|d| !d.is_empty()).map(|d| std::path::PathBuf::from(d).join(".config")));
+        if let Some(cfg) = cfg {
+            if let Ok(kde) = std::fs::read_to_string(cfg.join("kdeglobals")) {
+                if kde.lines().any(|l| {
+                    let low = l.trim().to_ascii_lowercase();
+                    (low.starts_with("lookandfeelpackage=") || low.starts_with("colorscheme=")) && low.contains("dark")
+                }) {
+                    return true;
+                }
+            }
+            if let Ok(gtk) = std::fs::read_to_string(cfg.join("gtk-3.0/settings.ini")) {
+                if gtk.lines().any(|l| {
+                    let low = l.trim().to_ascii_lowercase().replace(' ', "");
+                    low == "gtk-application-prefer-dark-theme=1" || low == "gtk-application-prefer-dark-theme=true"
+                }) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 }
 
 struct App {
@@ -1024,7 +1068,7 @@ impl App {
         let dark = match mode {
             ThemeMode::Dark => true,
             ThemeMode::Light => false,
-            ThemeMode::System => windows_dark(),
+            ThemeMode::System => system_dark(),
         };
         // the app's words, before anything is drawn
         crate::i18n::set(lang);
@@ -1510,7 +1554,7 @@ impl App {
                 self.set_dark(match mode {
                     ThemeMode::Dark => true,
                     ThemeMode::Light => false,
-                    ThemeMode::System => windows_dark(),
+                    ThemeMode::System => system_dark(),
                 });
                 self.save_settings();
             }
@@ -1686,9 +1730,16 @@ impl App {
             Message::DragWindow => return iced::window::latest().and_then(iced::window::drag),
             Message::ToggleMaximize => return iced::window::latest().and_then(iced::window::toggle_maximize),
             Message::Minimize => return iced::window::latest().and_then(|id| iced::window::minimize(id, true)),
-            // the X (or Alt+F4) hides the window to the tray: the model and the chats go on, and the tray icon
-            // brings it back or quits
-            Message::CloseWindow => return iced::window::latest().and_then(|id| iced::window::set_mode(id, iced::window::Mode::Hidden)),
+            // the X (or Alt+F4) hides the window to the tray when available; otherwise it closes cleanly
+            Message::CloseWindow => {
+                if tray::available() {
+                    return iced::window::latest().and_then(|id| iced::window::set_mode(id, iced::window::Mode::Hidden));
+                }
+                if self.own_server {
+                    return Task::done(Message::Quit);
+                }
+                return iced::exit();
+            }
             Message::Tray(tray::Ask::Show) => {
                 return iced::window::latest().and_then(|id| iced::window::set_mode::<Message>(id, iced::window::Mode::Windowed).chain(iced::window::gain_focus(id)));
             }
@@ -2659,10 +2710,14 @@ impl App {
             iced::Subscription::none()
         };
         // the tray icon, a second start of the app, and Alt+F4 (which hides the window as the X does)
-        let tray = iced::Subscription::run(|| {
-            use iced::futures::StreamExt;
-            tray::events().map(Message::Tray)
-        });
+        let tray = if tray::available() {
+            iced::Subscription::run(|| {
+                use iced::futures::StreamExt;
+                tray::events().map(Message::Tray)
+            })
+        } else {
+            iced::Subscription::none()
+        };
         let close = iced::window::close_requests().map(|_| Message::CloseWindow);
         // the Voice call view: the orb steps a dozen times a second (its mouth and level need more than the clock)
         let orb = if self.voice {

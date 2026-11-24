@@ -35,7 +35,7 @@ impl Api {
         // read it from that server's run-token-<port> file beside the chats instead
         if api.token.is_empty() {
             let port = addr.rsplit(':').next().unwrap_or("8080");
-            let file = std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("ghost-infer").join(format!("run-token-{port}")));
+            let file = crate::setup::data_dir().map(|d| d.join(format!("run-token-{port}")));
             api.token = file.and_then(|f| std::fs::read_to_string(f).ok()).map(|t| t.trim().to_string()).unwrap_or_default();
         }
         Ok(api)

@@ -37,9 +37,18 @@ pub const OFFERS: [Offer; 3] = [
     },
 ];
 
-/// %LOCALAPPDATA%\ghost-infer: the server's and the app's data.
-fn data_dir() -> Option<PathBuf> {
-    std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer"))
+/// The server's and the app's data (`%LOCALAPPDATA%\ghost-infer` on Windows;
+/// `$XDG_DATA_HOME/ghost-infer` or `$HOME/.local/share/ghost-infer` elsewhere).
+pub fn data_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer"));
+    #[cfg(not(windows))]
+    {
+        if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
+            return Some(PathBuf::from(d).join("ghost-infer"));
+        }
+        std::env::var_os("HOME").filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(".local").join("share").join("ghost-infer"))
+    }
 }
 
 /// Where downloaded models go.
@@ -50,7 +59,8 @@ pub fn models_dir() -> Option<PathBuf> {
 /// The server beside this program, if the app was installed with it.
 pub fn own_server() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let server = exe.with_file_name("ghost-infer.exe");
+    let name = if cfg!(windows) { "ghost-infer.exe" } else { "ghost-infer" };
+    let server = exe.with_file_name(name);
     server.exists().then_some(server)
 }
 
@@ -99,14 +109,14 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
         args.push(stt.into());
     }
     let log = |name: &str| std::fs::File::create(data.join(name)).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
-    use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new(server)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .stdout(log("server-out.log"))
-        .stderr(log("server.log"))
-        .creation_flags(0x0800_0000) // no console window; it goes on when the app closes, as the launcher's did
-        .spawn();
+    let mut cmd = std::process::Command::new(server);
+    cmd.args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log"));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // no console window; it goes on when the app closes, as the launcher's did
+    }
+    let _ = cmd.spawn();
 }
 
 /// "6.2 of 16.8 GB".

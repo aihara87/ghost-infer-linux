@@ -91,6 +91,9 @@ impl Pool {
 /// spinning would hold whole cores against the programs the user is working in (and against this
 /// process's own expert uploads). GHOST_INFER_POOL_PRIORITY=normal keeps them at normal priority.
 fn lower_priority() {
+    if std::env::var("GHOST_INFER_POOL_PRIORITY").is_ok_and(|v| v == "normal") {
+        return;
+    }
     #[cfg(windows)]
     {
         #[link(name = "kernel32")]
@@ -99,16 +102,61 @@ fn lower_priority() {
             fn SetThreadPriority(thread: *mut std::ffi::c_void, priority: i32) -> i32;
         }
         const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
-        if std::env::var("GHOST_INFER_POOL_PRIORITY").map_or(true, |v| v != "normal") {
-            unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
+        unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL) };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn setpriority(which: i32, who: u32, prio: i32) -> i32;
         }
+        unsafe { setpriority(0 /* PRIO_PROCESS */, 0, 5) };
     }
 }
 
-/// Worker i on its own physical core (logical CPU 2i: Windows numbers a core's two hyper-threads next to each
-/// other), so two workers never share one: a parallel pass is as slow as its slowest thread. Only when the
-/// pool has at most one thread per core; GHOST_INFER_POOL_PIN=0 leaves placement to Windows.
-fn pin(i: usize, n: usize) {
+#[cfg(target_os = "linux")]
+fn linux_cores() -> &'static Vec<Vec<usize>> {
+    static CORES: std::sync::OnceLock<Vec<Vec<usize>>> = std::sync::OnceLock::new();
+    CORES.get_or_init(|| {
+        let mut cores: Vec<Vec<usize>> = Vec::new();
+        let Ok(entries) = std::fs::read_dir("/sys/devices/system/cpu") else { return cores };
+        let mut cpus: Vec<(usize, std::path::PathBuf)> = entries
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name();
+                let id = name.to_str()?.strip_prefix("cpu")?.parse::<usize>().ok()?;
+                Some((id, e.path().join("topology/thread_siblings_list")))
+            })
+            .collect();
+        cpus.sort_by_key(|c| c.0);
+        for (_, path) in cpus {
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            let mut siblings = Vec::new();
+            for part in text.trim().split(',') {
+                if let Some((a, b)) = part.split_once('-') {
+                    if let (Ok(a), Ok(b)) = (a.parse::<usize>(), b.parse::<usize>()) {
+                        siblings.extend(a..=b);
+                    }
+                } else if let Ok(c) = part.parse::<usize>() {
+                    siblings.push(c);
+                }
+            }
+            siblings.sort_unstable();
+            siblings.dedup();
+            if !siblings.is_empty() && !cores.contains(&siblings) {
+                cores.push(siblings);
+            }
+        }
+        cores
+    })
+}
+
+/// Worker i on its own physical core, so two workers never share one: a parallel pass is as slow as its
+/// slowest thread. Only when the pool has at most one thread per core; GHOST_INFER_POOL_PIN=0 leaves placement
+/// to the OS.
+fn pin(_i: usize, _n: usize) {
+    if std::env::var("GHOST_INFER_POOL_PIN").is_ok_and(|v| v == "0") {
+        return;
+    }
     #[cfg(windows)]
     {
         #[link(name = "kernel32")]
@@ -117,12 +165,37 @@ fn pin(i: usize, n: usize) {
             fn SetThreadAffinityMask(thread: *mut std::ffi::c_void, mask: usize) -> usize;
         }
         let logical = thread::available_parallelism().map(|p| p.get()).unwrap_or(1);
-        if std::env::var("GHOST_INFER_POOL_PIN").is_ok_and(|v| v == "0") || 2 * n > logical || 2 * i >= usize::BITS as usize {
+        if 2 * _n > logical || 2 * _i >= usize::BITS as usize {
             return;
         }
         // the caller (thread 0) on core 0, both its hyper-threads allowed; workers on cores 1..n
-        let mask = if i == 0 { 3usize } else { 1usize << (2 * i) };
+        let mask = if _i == 0 { 3usize } else { 1usize << (2 * _i) };
         unsafe { SetThreadAffinityMask(GetCurrentThread(), mask) };
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe extern "C" {
+            fn sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const usize) -> i32;
+        }
+        let cores = linux_cores();
+        if _n > cores.len() || _i >= cores.len() {
+            return;
+        }
+        let mut mask = [0usize; 16]; // cpu_set_t (1024 bits)
+        let bits = usize::BITS as usize;
+        let set_cpu = |m: &mut [usize; 16], cpu: usize| {
+            if cpu < m.len() * bits {
+                m[cpu / bits] |= 1usize << (cpu % bits);
+            }
+        };
+        if _i == 0 {
+            for &cpu in &cores[0] {
+                set_cpu(&mut mask, cpu);
+            }
+        } else {
+            set_cpu(&mut mask, cores[_i][0]);
+        }
+        unsafe { sched_setaffinity(0, std::mem::size_of_val(&mask), mask.as_ptr()) };
     }
 }
 

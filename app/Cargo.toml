@@ -13,10 +13,13 @@ path = "src/main.rs"
 [dependencies]
 # drawn on the CPU (tiny-skia): no GPU memory taken from the model, about 16 MB idle
 iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "thread-pool", "markdown", "highlighter", "canvas", "selector", "advanced"] }
-# Windows' own folder dialog, for the folders the model may use
+# system folder/file dialog, for the folders the model may use
 rfd = "0.17"
-# voice calls: the microphone and the speaker (WASAPI on Windows)
+# voice calls: the microphone and the speaker (WASAPI on Windows, ALSA/Pulse/PipeWire on Linux)
 cpal = "0.15"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+iced = { version = "0.14", default-features = false, features = ["x11", "wayland"] }
 # Maya's portrait frames for the call's face (assets/maya), decoded once
 
 # the preview pane: Edge's WebView2 (part of Windows 10 and 11) as a child of the app's window, made only

@@ -269,7 +269,18 @@ mod os {
         print!("\x1b[2J\x1b[?25l");
     }
     pub fn size() -> (usize, usize) {
+        #[cfg(target_os = "linux")]
+        {
+            unsafe extern "C" {
+                fn ioctl(fd: i32, req: usize, ...) -> i32;
+            }
+            let mut ws = [0u16; 4]; // winsize: row, col, xpixel, ypixel
+            if unsafe { ioctl(1, 0x5413 /* TIOCGWINSZ */, ws.as_mut_ptr()) } == 0 && ws[1] > 0 && ws[0] > 0 {
+                return ((ws[1] as usize).max(20), (ws[0] as usize).max(10));
+            }
+        }
         let w = std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()).unwrap_or(80);
-        (w, 24)
+        let h = std::env::var("LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+        (w, h)
     }
 }

@@ -93,11 +93,21 @@ impl Skin {
 
 pub const BODY: Font = Font::with_name("Instrument Sans");
 const MEDIUM: Font = Font { weight: iced::font::Weight::Medium, ..BODY };
+#[cfg(windows)]
 const SERIF: Font = Font::with_name("Georgia");
+#[cfg(not(windows))]
+const SERIF: Font = Font::with_name("DejaVu Serif");
+#[cfg(windows)]
 const ICONS: Font = Font::with_name("Segoe MDL2 Assets");
+#[cfg(not(windows))]
+const ICONS: Font = Font::with_name("DejaVu Sans");
+#[cfg(windows)]
 const MONO: Font = Font::with_name("Consolas");
+#[cfg(not(windows))]
+const MONO: Font = Font::MONOSPACE;
 
-/// Segoe MDL2 Assets code points.
+/// Segoe MDL2 Assets code points on Windows; DejaVu Sans Unicode symbols elsewhere.
+#[cfg(windows)]
 mod ic {
     pub const ADD: char = '\u{E710}';
     pub const DELETE: char = '\u{E74D}';
@@ -150,34 +160,87 @@ mod ic {
     pub const ATTACH: char = '\u{E723}';
 }
 
+#[cfg(not(windows))]
+mod ic {
+    pub const ADD: char = '+';
+    pub const DELETE: char = '\u{2715}';
+    pub const SETTINGS: char = '\u{2699}';
+    pub const CLOSE_PANE: char = '\u{25EB}';
+    pub const MINIMIZE: char = '\u{2212}';
+    pub const MAXIMIZE: char = '\u{25A1}';
+    pub const RESTORE: char = '\u{2750}';
+    pub const CLOSE: char = '\u{2715}';
+    pub const DOCK_RIGHT: char = '\u{25E9}';
+    pub const CHIP: char = '\u{2318}';
+    pub const SKILL: char = '\u{2726}';
+    pub const PLUG: char = '\u{26A1}';
+    pub const TASKS: char = '\u{2611}';
+    pub const MEMORY: char = '\u{2605}';
+    pub const NOW: char = '\u{25CF}';
+    pub const TODO: char = '\u{25CB}';
+    pub const OPEN_PANE: char = '\u{25EB}';
+    pub const UP: char = '\u{2191}';
+    pub const CHEVRON_UP: char = '\u{25B4}';
+    pub const RIGHT: char = '\u{25B8}';
+    pub const DOWN: char = '\u{25BE}';
+    pub const COPY: char = '\u{2750}';
+    pub const RETRY: char = '\u{21BB}';
+    pub const FILE: char = '\u{2261}';
+    pub const FOLDER: char = '\u{2630}';
+    pub const SEARCH: char = '\u{25CE}';
+    pub const EDIT: char = '\u{270E}';
+    pub const TERMINAL: char = '>';
+    pub const GLOBE: char = '\u{25C9}';
+    pub const PC: char = '\u{25A1}';
+    pub const BOLT: char = '\u{26A1}';
+    pub const CHECK: char = '\u{2713}';
+    pub const CANCEL: char = '\u{2717}';
+    pub const CHAT: char = '\u{2709}';
+    pub const CLOCK: char = '\u{25D0}';
+    pub const UNDO: char = '\u{21B6}';
+    pub const DOWNLOAD: char = '\u{2193}';
+    pub const OPEN_NEW: char = '\u{2197}';
+    pub const FLAG: char = '\u{2691}';
+    pub const REPEAT: char = '\u{21BA}';
+    pub const PHONE: char = '\u{260E}';
+    pub const CODE: char = '#';
+    pub const MIC: char = '\u{25C9}';
+    pub const MIC_OFF: char = '\u{25CB}';
+    pub const HANG_UP: char = '\u{2715}';
+    pub const INFO: char = 'i';
+    pub const COLOR: char = '\u{25D0}';
+    pub const KEYBOARD: char = '\u{2328}';
+    pub const ATTACH: char = '+';
+}
+
 fn icon<'a>(c: char, size: impl Into<Pixels>) -> text::Text<'a> {
     text(c.to_string()).font(ICONS).size(size).line_height(1.0)
 }
 
-/// The icon a plugin picked for its row and badge, by name (the names plugins.rs's guide lists; Segoe MDL2).
+/// The icon a plugin picked for its row and badge, by name (the names plugins.rs's guide lists).
 fn plugin_icon(name: &str) -> char {
     match name.trim().to_lowercase().as_str() {
-        "status" | "health" | "uptime" | "pulse" | "monitor" => '\u{E9D9}',
-        "chart" | "stats" | "dashboard" | "graph" => '\u{E9D2}',
+        "status" | "health" | "uptime" | "pulse" | "monitor" => if cfg!(windows) { '\u{E9D9}' } else { '\u{26A1}' },
+        "chart" | "stats" | "dashboard" | "graph" => if cfg!(windows) { '\u{E9D2}' } else { '\u{25B4}' },
         "globe" | "web" | "site" => ic::GLOBE,
-        "shield" | "security" => '\u{EA18}',
-        "bell" | "alert" | "alerts" => '\u{EA8F}',
-        "calendar" => '\u{E787}',
-        "cloud" | "weather" => '\u{E753}',
-        "mail" | "email" => '\u{E715}',
-        "money" | "finance" | "payment" => '\u{E8C7}',
-        "music" | "audio" => '\u{E8D6}',
-        "home" => '\u{E80F}',
-        "people" | "users" | "contacts" => '\u{E716}',
-        "shop" | "store" | "cart" => '\u{E719}',
-        "game" | "games" => '\u{E7FC}',
-        "map" | "location" => '\u{E707}',
+        "shield" | "security" => if cfg!(windows) { '\u{EA18}' } else { '\u{2605}' },
+        "bell" | "alert" | "alerts" => if cfg!(windows) { '\u{EA8F}' } else { '\u{2691}' },
+        "calendar" => if cfg!(windows) { '\u{E787}' } else { ic::FILE },
+        "cloud" | "weather" => if cfg!(windows) { '\u{E753}' } else { '\u{2601}' },
+        "mail" | "email" => if cfg!(windows) { '\u{E715}' } else { '\u{2709}' },
+        "money" | "finance" | "payment" => if cfg!(windows) { '\u{E8C7}' } else { '$' },
+        "music" | "audio" => if cfg!(windows) { '\u{E8D6}' } else { '\u{266A}' },
+        "home" => if cfg!(windows) { '\u{E80F}' } else { '\u{2302}' },
+        "people" | "users" | "contacts" => if cfg!(windows) { '\u{E716}' } else { ic::SEARCH },
+        "shop" | "store" | "cart" => if cfg!(windows) { '\u{E719}' } else { ic::MEMORY },
+        "game" | "games" => if cfg!(windows) { '\u{E7FC}' } else { '\u{2666}' },
+        "map" | "location" => if cfg!(windows) { '\u{E707}' } else { ic::GLOBE },
         "clock" | "time" => ic::CLOCK,
         "news" | "doc" | "document" => ic::FILE,
         "code" => ic::CODE,
         "chat" => ic::CHAT,
-        "warning" => '\u{E7BA}',
-        "heart" => '\u{EB51}',
+        "warning" => if cfg!(windows) { '\u{E7BA}' } else { '\u{26A0}' },
+        "heart" => if cfg!(windows) { '\u{EB51}' } else { '\u{2665}' },
         "star" => ic::MEMORY,
         "bolt" => ic::BOLT,
         _ => ic::PLUG,
@@ -257,24 +320,61 @@ struct Item {
 
 /// "Good morning" etc., from the computer's clock.
 fn greeting() -> &'static str {
-    #[repr(C)]
-    #[derive(Default)]
-    struct SystemTime {
-        year: u16,
-        month: u16,
-        dow: u16,
-        day: u16,
-        hour: u16,
-        minute: u16,
-        second: u16,
-        ms: u16,
-    }
-    unsafe extern "system" {
-        fn GetLocalTime(t: *mut SystemTime);
-    }
-    let mut t = SystemTime::default();
-    unsafe { GetLocalTime(&mut t) };
-    match t.hour {
+    let hour = {
+        #[cfg(windows)]
+        {
+            #[repr(C)]
+            #[derive(Default)]
+            struct SystemTime {
+                year: u16,
+                month: u16,
+                dow: u16,
+                day: u16,
+                hour: u16,
+                minute: u16,
+                second: u16,
+                ms: u16,
+            }
+            unsafe extern "system" {
+                fn GetLocalTime(t: *mut SystemTime);
+            }
+            let mut t = SystemTime::default();
+            unsafe { GetLocalTime(&mut t) };
+            t.hour as i32
+        }
+        #[cfg(unix)]
+        {
+            #[repr(C)]
+            struct Tm {
+                sec: i32,
+                min: i32,
+                hour: i32,
+                mday: i32,
+                mon: i32,
+                year: i32,
+                wday: i32,
+                yday: i32,
+                isdst: i32,
+                gmtoff: isize,
+                zone: *const i8,
+            }
+            unsafe extern "C" {
+                fn time(t: *mut isize) -> isize;
+                fn localtime_r(timep: *const isize, result: *mut Tm) -> *mut Tm;
+            }
+            let mut now = 0isize;
+            let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() };
+            unsafe {
+                time(&mut now);
+                if localtime_r(&now, &mut tm).is_null() { 12 } else { tm.hour }
+            }
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            12
+        }
+    };
+    match hour {
         5..=11 => tr("Good morning"),
         12..=17 => tr("Good afternoon"),
         _ => tr("Good evening"),
