@@ -368,22 +368,9 @@ fn eq(a: &str, b: &str) -> bool {
 // ---- randomness from the operating system
 
 fn random_bytes(n: usize) -> Vec<u8> {
+    use std::io::Read;
     let mut buf = vec![0u8; n];
-    #[cfg(windows)]
-    {
-        #[link(name = "advapi32")]
-        unsafe extern "system" {
-            #[link_name = "SystemFunction036"]
-            fn RtlGenRandom(buf: *mut u8, len: u32) -> u8;
-        }
-        let ok = unsafe { RtlGenRandom(buf.as_mut_ptr(), n as u32) } != 0;
-        assert!(ok, "the system gave no random bytes");
-    }
-    #[cfg(not(windows))]
-    {
-        use std::io::Read;
-        std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)).expect("the system gave no random bytes");
-    }
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)).expect("the system gave no random bytes");
     buf
 }
 

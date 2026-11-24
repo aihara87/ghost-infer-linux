@@ -412,10 +412,9 @@ fn remember(path: &Path, checkpoint: &str) -> Result<(), String> {
     writeln!(j, "{}\t{seq}\t{}\t{}", checkpoint.replace(['\t', '\n'], " "), path.display(), existed as u8).map_err(|e| e.to_string())
 }
 
-/// A path for people and models: without Windows' \\?\ prefix.
+/// A path as the model should see it.
 fn plain(p: &Path) -> String {
-    let s = p.display().to_string();
-    s.strip_prefix(r"\\?\").map(String::from).unwrap_or(s)
+    p.display().to_string()
 }
 
 /// Puts back every file changed under `checkpoint`, newest change first; returns what it did.
@@ -554,79 +553,18 @@ const MAX_COMMAND_SECS: usize = 600;
 /// Output a background process keeps (its latest part), in bytes.
 const BG_KEEP: usize = 256 << 10;
 
-/// Run before every command: UTF-8 output whatever the console's code page. PowerShell quotes the whole
-/// script in its error messages, so text_of takes this line back out.
-#[cfg(windows)]
-const PREAMBLE: &str = "[Console]::OutputEncoding = [Text.Encoding]::UTF8";
-
-/// Bash's `a && b` and `a || b` as Windows PowerShell 5.1 (which has neither; 7 has) runs them: `a; if ($?) { b }`
-/// and `a; if (-not $?) { b }`, nested for a chain. Models write them out of habit (Qwen3-Coder ran
-/// `cd x && dir` three times running, a parse error each time). Only outside quotes and brackets.
-#[cfg(windows)]
-fn and_chains(command: &str) -> String {
-    let (mut parts, mut ops) = (Vec::new(), Vec::new());
-    let (b, mut depth, mut quote, mut start, mut i) = (command.as_bytes(), 0i32, None, 0, 0);
-    while i < b.len() {
-        let c = b[i];
-        match quote {
-            Some(q) if c == q => quote = None,
-            Some(_) => {}
-            None => match c {
-                b'\'' | b'"' => quote = Some(c),
-                b'(' | b'{' | b'[' => depth += 1,
-                b')' | b'}' | b']' => depth -= 1,
-                b'&' | b'|' if depth == 0 && b.get(i + 1) == Some(&c) => {
-                    parts.push(command[start..i].trim());
-                    ops.push(c);
-                    i += 2;
-                    start = i;
-                    continue;
-                }
-                _ => {}
-            },
-        }
-        i += 1;
-    }
-    if ops.is_empty() {
-        return command.to_string();
-    }
-    parts.push(command[start..].trim());
-    let mut out = parts[parts.len() - 1].to_string();
-    for k in (0..ops.len()).rev() {
-        out = format!("{}; if ({}$?) {{ {out} }}", parts[k], if ops[k] == b'|' { "-not " } else { "" });
-    }
-    out
-}
-
-/// `command` in the platform shell (PowerShell on Windows, `sh` elsewhere), started in `cwd`, stdout and
-/// stderr captured together.
+/// `command` in `sh`, started in `cwd`, stdout and stderr captured together.
 fn shell(command: &str, cwd: &Path) -> Result<std::process::Child, String> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"])
-            .arg(format!("{PREAMBLE}\n{}", and_chains(command)))
-            .current_dir(cwd)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .map_err(|e| format!("cannot start PowerShell: {e}"))
-    }
-    #[cfg(not(windows))]
-    {
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", command]).current_dir(cwd).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            cmd.process_group(0);
-        }
-        cmd.spawn().map_err(|e| format!("cannot start sh: {e}"))
-    }
+    use std::os::unix::process::CommandExt;
+    Command::new("sh")
+        .args(["-c", command])
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("cannot start sh: {e}"))
 }
 
 /// Reads a child's stdout and stderr on two threads into one shared buffer, keeping its last `keep` bytes.
@@ -664,21 +602,13 @@ fn collect_counted(child: &mut std::process::Child, keep: usize) -> (std::sync::
 
 /// Ends a process and everything it started, by process id.
 fn kill_tree(pid: u32) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).creation_flags(0x0800_0000).output();
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
     }
-    #[cfg(unix)]
-    {
-        unsafe extern "C" {
-            fn kill(pid: i32, sig: i32) -> i32;
-        }
-        if pid > 0 {
-            let pg = -(pid as i32);
-            if unsafe { kill(pg, 9) } != 0 {
-                unsafe { kill(pid as i32, 9) };
-            }
+    if pid > 0 {
+        let pg = -(pid as i32);
+        if unsafe { kill(pg, 9) } != 0 {
+            unsafe { kill(pid as i32, 9) };
         }
     }
 }
@@ -709,12 +639,9 @@ fn run_command(command: &str, cwd: &Path, secs: usize) -> Result<String, String>
     Ok(format!("{head}\n{}", if out.is_empty() { "(no output)" } else { &out }))
 }
 
-/// Process output as text: lossy UTF-8, Windows line ends made plain, trailing blank lines dropped.
+/// Process output as text: lossy UTF-8, CRLF normalized, trailing blank lines dropped.
 fn text_of(bytes: &[u8]) -> String {
-    let s = String::from_utf8_lossy(bytes).replace("\r\n", "\n");
-    #[cfg(windows)]
-    let s = s.replace(&format!("{PREAMBLE}\n"), "");
-    s.trim_end().to_string()
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n").trim_end().to_string()
 }
 
 /// A command left running: its process and the latest of its output, and how much the model has seen.
@@ -863,9 +790,9 @@ pub fn process_output(id: usize) -> Option<String> {
     Some(clip(&text_of(&out), MAX_RESULT))
 }
 
-// ---- web (through Windows' own curl.exe: no TLS library here)
+// ---- web (through system curl: no TLS library here)
 
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
 
 /// GET `url` (http or https), at most 5 MB in 20 s: the body and its Content-Type.
 fn http_get(url: &str) -> Result<(Vec<u8>, String), String> {
@@ -873,17 +800,12 @@ fn http_get(url: &str) -> Result<(Vec<u8>, String), String> {
         return Err(format!("{url} is not an http(s) address"));
     }
     const MARK: &[u8] = b"\n__ghost_infer_content_type__:";
-    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
-    let mut cmd = Command::new(curl);
-    cmd.args(["-sSL", "--compressed", "--max-time", "20", "--max-filesize", "5000000", "-A", USER_AGENT, "-w"])
+    let out = Command::new("curl")
+        .args(["-sSL", "--compressed", "--max-time", "20", "--max-filesize", "5000000", "-A", USER_AGENT, "-w"])
         .arg(format!("{}%{{content_type}}", String::from_utf8_lossy(MARK)))
-        .arg(url);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-    let out = cmd.output().map_err(|e| format!("cannot run {curl}: {e}"))?;
+        .arg(url)
+        .output()
+        .map_err(|e| format!("cannot run curl: {e}"))?;
     if !out.status.success() {
         return Err(format!("could not fetch {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
@@ -1128,8 +1050,7 @@ mod tests {
     #[test]
     fn check_process_waits_for_news_and_tells_how_it_ended() {
         let dir = std::env::temp_dir();
-        let cmd = if cfg!(windows) { "Start-Sleep -Milliseconds 2500; 'all done'; exit 3" } else { "sleep 2.5; echo 'all done'; exit 3" };
-        let id = started(&start_process(cmd, &dir, "test", "test").unwrap());
+        let id = started(&start_process("sleep 2.5; echo 'all done'; exit 3", &dir, "test", "test").unwrap());
         let now = check_process(id, 0).unwrap();
         assert!(now.contains("still running") && now.contains("no new output"), "{now}");
         let t = std::time::Instant::now();
@@ -1144,12 +1065,7 @@ mod tests {
     fn new_output_shows_after_the_kept_tail_is_full() {
         let dir = std::env::temp_dir();
         // ~400 KB, more than the 256 KB kept, then a last line after a pause
-        let cmd = if cfg!(windows) {
-            "1..20000 | ForEach-Object { \"line $_ padding padding\" }; Start-Sleep -Milliseconds 1500; 'the last line'"
-        } else {
-            "i=1; while [ $i -le 20000 ]; do echo \"line $i padding padding\"; i=$((i+1)); done; sleep 1.5; echo 'the last line'"
-        };
-        let id = started(&start_process(cmd, &dir, "test", "test").unwrap());
+        let id = started(&start_process("i=1; while [ $i -le 20000 ]; do echo \"line $i padding padding\"; i=$((i+1)); done; sleep 1.5; echo 'the last line'", &dir, "test", "test").unwrap());
         let first = check_process(id, 20).unwrap();
         assert!(first.contains("line 1") || first.contains("earlier output dropped"), "{}", &first[..200.min(first.len())]);
         let mut last = String::new();
@@ -1211,22 +1127,6 @@ mod tests {
         assert!(!root.join("new.txt").exists());
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn and_chains_in_powershell() {
-        assert_eq!(and_chains("cd site && dir"), "cd site; if ($?) { dir }");
-        assert_eq!(and_chains("a && b && c"), "a; if ($?) { b; if ($?) { c } }");
-        assert_eq!(and_chains("npm test || echo failed"), "npm test; if (-not $?) { echo failed }");
-        // in quotes, in brackets, and a pipe: as they are
-        assert_eq!(and_chains("echo 'a && b'"), "echo 'a && b'");
-        assert_eq!(and_chains("if ($x) { a && b }"), "if ($x) { a && b }");
-        assert_eq!(and_chains("dir | select -first 3"), "dir | select -first 3");
-        // and it runs: the second part only after the first worked
-        let out = run_command("cd .. && echo ran", &std::env::temp_dir(), 30).unwrap();
-        assert!(out.starts_with("exit code 0") && out.contains("ran"), "{out}");
-    }
-
-    #[cfg(not(windows))]
     #[test]
     fn chains_in_sh() {
         let out = run_command("cd .. && echo ran", &std::env::temp_dir(), 30).unwrap();
@@ -1242,9 +1142,6 @@ mod tests {
         assert!(s.resolve("sub/new.txt").is_ok());
         assert!(s.resolve("..").is_err());
         assert!(s.resolve("sub/../../x").is_err());
-        #[cfg(windows)]
-        assert!(s.resolve(r"C:\Windows\win.ini").is_err());
-        #[cfg(not(windows))]
         assert!(s.resolve("/etc/passwd").is_err());
         assert!(Settings::default().resolve("a").is_err());
     }

@@ -1274,8 +1274,8 @@ const TOOL_GROUPS = {
     T("edit_file", "Replace exact text in a file. Read the file first; old_string must match exactly once, so include enough surrounding lines.", { path: S("File path"), old_string: S("The exact text to replace"), new_string: S("The text to put in its place"), replace_all: B("Replace every match") }, ["path", "old_string", "new_string"]),
   ],
   cmd: [
-    T("run_command", "Run a Windows PowerShell command and get its output (stops after 60 s unless timeout is set).", { command: S("PowerShell command"), cwd: S("Folder to run it in"), timeout: N("Seconds, up to 600") }, ["command"]),
-    T("start_process", "Start a long-running PowerShell command (a server, a build) in the background. Returns its id.", { command: S("PowerShell command"), cwd: S("Folder to run it in") }, ["command"]),
+    T("run_command", "Run a shell command and get its output (stops after 60 s unless timeout is set).", { command: S("Shell command"), cwd: S("Folder to run it in"), timeout: N("Seconds, up to 600") }, ["command"]),
+    T("start_process", "Start a long-running shell command (a server, a build) in the background. Returns its id.", { command: S("Shell command"), cwd: S("Folder to run it in") }, ["command"]),
     T("check_process", "A background process's state and the output it printed since the last check.", { id: N("Process id") }, ["id"]),
     T("stop_process", "Stop a background process.", { id: N("Process id") }, ["id"]),
   ],
@@ -1321,7 +1321,7 @@ function approve(el, cl, group) {
     const detail = {
       write_file: [`Write ${a.path} (${String(a.content ?? "").split("\n").length} lines)?`, a.content],
       edit_file: [`Change ${a.path}?`, `- ${String(a.old_string ?? "").split("\n").join("\n- ")}\n+ ${String(a.new_string ?? "").split("\n").join("\n+ ")}`],
-      run_command: [`Run this in PowerShell${a.cwd ? " in " + a.cwd : ""}?`, a.command],
+      run_command: [`Run this command${a.cwd ? " in " + a.cwd : ""}?`, a.command],
       start_process: [`Start this in the background${a.cwd ? " in " + a.cwd : ""}?`, a.command],
       web_search: [`Search the web for "${a.query}"?`, ""],
       fetch_url: [`Open ${a.url}?`, ""],
@@ -1376,7 +1376,7 @@ loadHarness();
 // told to the model when tools are on: where it may work, and how this computer runs commands
 function toolPrompt() {
   const where = folders.length ? `You may use files in ${folders.join(", ")} (relative paths start in ${folders[0]}).` : "No folders are allowed yet, so file tools will fail; if you need files, ask the user to add a folder in Settings.";
-  return `You can use tools to do things on the user's computer. ${where} It runs Windows; commands run in Windows PowerShell. Read a file before you edit it. Use tools until the task is done, then answer briefly.`;
+  return `You can use tools to do things on the user's computer. ${where} It runs Linux; commands run in sh. Read a file before you edit it. Use tools until the task is done, then answer briefly.`;
 }
 // a reply that used tools, as the messages the model wrote and read: each round's call and the results, then the answer
 function expand(m) {

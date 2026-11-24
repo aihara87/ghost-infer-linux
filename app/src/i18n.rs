@@ -38,18 +38,6 @@ pub fn is_zh() -> bool {
     CHINESE.load(Ordering::Relaxed) == 1
 }
 
-/// Windows' own UI language. The low byte is the primary language: 0x04 is Chinese (any of its scripts), and
-/// GetUserDefaultUILanguage's 0x0804 (Simplified) and 0x0404 (Traditional) both carry it.
-#[cfg(windows)]
-fn system_is_chinese() -> bool {
-    unsafe extern "system" {
-        fn GetUserDefaultUILanguage() -> u16;
-    }
-    let id = unsafe { GetUserDefaultUILanguage() };
-    (id & 0x3ff) == 0x04
-}
-
-#[cfg(not(windows))]
 fn system_is_chinese() -> bool {
     std::env::var("LANG").map(|l| l.starts_with("zh")).unwrap_or(false)
 }
@@ -93,8 +81,8 @@ pub fn tr(en: &'static str) -> &'static str {
         "English" => "English",
         "中文" => "中文",
         "How ghost starts and stops." => "Ghost 的启动与退出方式。",
-        "English by default. Chinese follows Windows unless you pick one." => {
-            "默认英文。选「跟随系统」时，Windows 是中文就用中文。"
+        "English by default. Chinese follows your system locale unless you pick one." => {
+            "默认英文。选「跟随系统」时，系统语言是中文就用中文。"
         }
         "Open with the last model" => "启动时打开上次的模型",
         "Loads the model you used last when ghost starts." => "Ghost 启动时加载你上次使用的模型。",
@@ -113,15 +101,15 @@ pub fn tr(en: &'static str) -> &'static str {
         "Quit ghost" => "退出 Ghost",
         "Quit" => "退出",
         "Quitting…" => "正在退出…",
-        "Closing the window keeps ghost in the tray. This stops it and frees the model's memory." => {
-            "关闭窗口只是把 Ghost 收进托盘。这里则彻底停止它，并释放模型占用的内存。"
+        "Stops the local server and frees the model's memory." => {
+            "彻底停止本地服务，并释放模型占用的内存。"
         }
         "How ghost looks." => "Ghost 的外观。",
         "Colour theme" => "配色主题",
         "Theme" => "主题",
         "Light" => "浅色",
         "Dark" => "深色",
-        "Fog is light, Graphite dark. System follows Windows." => "Fog 为浅色，Graphite 为深色。跟随系统则与 Windows 一致。",
+        "Fog is light, Graphite dark. System follows your desktop theme." => "Fog 为浅色，Graphite 为深色。跟随系统则与桌面主题一致。",
         "Where ghost finds models." => "Ghost 从这些位置查找模型。",
         "Folders" => "文件夹",
         "Its GGUF files show in the model menus at once, and from then on." => {

@@ -62,14 +62,8 @@ fn enabled(m: &Json) -> bool {
     m.get("enabled").and_then(Json::as_bool) != Some(false)
 }
 
-/// The Python 3 command (`py.exe` on Windows, `python3` elsewhere).
+/// The Python 3 command (`python3`).
 pub fn py_launcher() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        let p = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("py.exe"))?;
-        p.is_file().then_some(p)
-    }
-    #[cfg(not(windows))]
     Some(PathBuf::from("python3"))
 }
 
@@ -97,8 +91,6 @@ fn server(dir: &Path, m: &Json) -> Option<Json> {
         None => (m.get("command").and_then(Json::as_str)?.to_string(), m.get("args").and_then(Json::as_array).unwrap_or(&[]).to_vec()),
     };
     let mut command = command;
-    #[cfg(windows)]
-    let mut args = args;
     let mut env: Vec<(String, Json)> = match m.get("env") {
         Some(Json::Obj(f)) => f.clone(),
         _ => Vec::new(),
@@ -106,8 +98,6 @@ fn server(dir: &Path, m: &Json) -> Option<Json> {
     if matches!(command.to_lowercase().as_str(), "python" | "python3" | "python.exe" | "py") {
         if let Some(py) = py_launcher() {
             command = py.display().to_string();
-            #[cfg(windows)]
-            args.insert(0, str("-3"));
         }
         env.push(("PYTHONUNBUFFERED".into(), str("1")));
         env.push(("PYTHONIOENCODING".into(), str("utf-8")));
@@ -511,16 +501,7 @@ fn python_error(d: &Path) -> Option<String> {
     if files.is_empty() {
         return None;
     }
-    let mut cmd = std::process::Command::new(py);
-    #[cfg(windows)]
-    cmd.arg("-3");
-    cmd.arg("-c").arg(CHECK).args(&files).current_dir(d);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // no console window
-    }
-    let out = cmd.output().ok()?;
+    let out = std::process::Command::new(py).arg("-c").arg(CHECK).args(&files).current_dir(d).output().ok()?;
     if out.status.success() {
         return None;
     }

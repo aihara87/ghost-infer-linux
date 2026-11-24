@@ -125,20 +125,12 @@ impl Conn {
     }
 
     fn stop(&mut self) {
-        #[cfg(windows)]
-        {
-            // the whole tree: npx and cmd start node underneath
-            let _ = Command::new("taskkill").args(["/T", "/F", "/PID", &self.child.id().to_string()]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        unsafe extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
         }
-        #[cfg(unix)]
-        {
-            unsafe extern "C" {
-                fn kill(pid: i32, sig: i32) -> i32;
-            }
-            let pid = self.child.id() as i32;
-            if pid > 0 {
-                unsafe { kill(-pid, 9) };
-            }
+        let pid = self.child.id() as i32;
+        if pid > 0 {
+            unsafe { kill(-pid, 9) };
         }
         let _ = self.child.kill();
     }
@@ -170,9 +162,9 @@ fn servers() -> &'static Mutex<Vec<Arc<Mutex<Server>>>> {
     S.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// The server process, started without a window. On Windows, a command it cannot start by itself (npx, uvx:
-/// they are .cmd files) goes through cmd.
+/// The server process, in its own process group.
 fn spawn(name: &str, cfg: &Json) -> Result<Conn, String> {
+    use std::os::unix::process::CommandExt;
     let command = cfg.get("command").and_then(Json::as_str).ok_or("no command")?;
     let args: Vec<String> = cfg.get("args").and_then(Json::as_array).unwrap_or(&[]).iter().filter_map(Json::as_str).map(String::from).collect();
     let env: Vec<(String, String)> = match cfg.get("env") {
@@ -180,50 +172,16 @@ fn spawn(name: &str, cfg: &Json) -> Result<Conn, String> {
         _ => Vec::new(),
     };
     let log = config_file().ok().and_then(|p| p.parent().map(|d| d.join(format!("mcp-{}.log", clean(name))))).and_then(|p| std::fs::File::create(p).ok());
-    let build = |_direct: bool| {
-        #[cfg(windows)]
-        let mut c = if _direct {
-            let mut c = Command::new(command);
-            c.args(&args);
-            c
-        } else {
-            let mut c = Command::new("cmd");
-            c.arg("/C").arg(command).args(&args);
-            c
-        };
-        #[cfg(not(windows))]
-        let mut c = {
-            let mut c = Command::new(command);
-            c.args(&args);
-            c
-        };
-        c.envs(env.iter().cloned()).stdin(Stdio::piped()).stdout(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            c.creation_flags(CREATE_NO_WINDOW);
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            c.process_group(0);
-        }
-        if let Some(d) = cfg.get("cwd").and_then(Json::as_str) {
-            c.current_dir(d);
-        }
-        c.stderr(match log.as_ref().and_then(|f| f.try_clone().ok()) {
-            Some(f) => Stdio::from(f),
-            None => Stdio::null(),
-        });
-        c
-    };
-    let mut child = match build(true).spawn() {
-        Ok(c) => c,
-        #[cfg(windows)]
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => build(false).spawn().map_err(|e| format!("cannot start {command}: {e}"))?,
-        Err(e) => return Err(format!("cannot start {command}: {e}")),
-    };
+    let mut c = Command::new(command);
+    c.args(&args).envs(env).stdin(Stdio::piped()).stdout(Stdio::piped()).process_group(0);
+    if let Some(d) = cfg.get("cwd").and_then(Json::as_str) {
+        c.current_dir(d);
+    }
+    c.stderr(match log.as_ref().and_then(|f| f.try_clone().ok()) {
+        Some(f) => Stdio::from(f),
+        None => Stdio::null(),
+    });
+    let mut child = c.spawn().map_err(|e| format!("cannot start {command}: {e}"))?;
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let (tx, lines) = mpsc::channel();
@@ -501,9 +459,6 @@ pub fn call(full: &str, args: &Json) -> String {
 /// Adds the servers configured in Claude Desktop (%APPDATA%\Claude\claude_desktop_config.json) to mcp.json;
 /// a server already here keeps its settings. The names added.
 pub fn import_claude() -> Result<Vec<String>, String> {
-    #[cfg(windows)]
-    let src = std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join("Claude").join("claude_desktop_config.json")).ok_or("APPDATA is not set")?;
-    #[cfg(not(windows))]
     let src = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)

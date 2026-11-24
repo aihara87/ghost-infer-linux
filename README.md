@@ -12,8 +12,7 @@
   and comes with a desktop app where the model works on your files.
 </p>
 
-> **Linux / Arch Linux Port:** This fork adds native Linux support (tested on CachyOS / Arch Linux `x86_64` with KDE Wayland and CUDA 13.5) on top of the original Windows-only upstream project:
-> **[affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghost-infer)**. See [Arch Linux / Linux Port](#arch-linux--linux-port) below for everything that was ported and known limitations.
+> **Linux-Only Fork (Arch / CachyOS):** This repository is a Linux-only port and cleanup of the original Windows project **[affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghost-infer)**. Windows-specific code (`Win32` APIs, `wry`/WebView2, `tray-icon`, `.bat`/`.ps1` scripts, and the Inno Setup `installer/`) has been removed. See [Arch Linux / Linux Port](#arch-linux--linux-port) for details.
 
 <p align="center">
   <a href="#install"><b>Install</b></a> ·
@@ -113,26 +112,17 @@ harnesses work unchanged: point them at `http://127.0.0.1:8080/v1`. [More](docs/
 One 3.8 MB file with two Rust dependencies: no Python, no Docker. It compiles its GPU code for your card on first
 start.
 
-## Install
+## Install & Build from source
 
-**[Download GhostSetup for Windows](https://github.com/affifuddin-hazam/ghost-infer/releases/latest)** and run
-it. It needs no administrator rights and nothing else installed. The app starts the server and, the first
-time, offers models to download, or uses the GGUF files you already have.
-
-<details>
-<summary>Build from source</summary>
+Install prerequisites on Arch Linux (CUDA toolkit for NVRTC `--gpu`, `curl`, DejaVu fonts, and XDG portal / PipeWire for the desktop app):
 
 ```bash
-git clone https://github.com/affifuddin-hazam/ghost-infer
-cd ghost-infer
-cargo build --release
-target\release\ghost-infer serve models\Qwen3-8B-Q4_K_M.gguf --gpu
+sudo pacman -S cuda curl ttf-dejavu xdg-desktop-portal
+cargo build --release --workspace
+./target/release/ghost-infer serve models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --gpu
 ```
 
-Open <http://127.0.0.1:8080> to chat, or point any OpenAI client at `http://127.0.0.1:8080/v1`. Built from
-source, it needs the CUDA toolkit's NVRTC: see [Building](docs/building.md).
-
-</details>
+Open <http://127.0.0.1:8080> to chat, point any OpenAI client at `http://127.0.0.1:8080/v1`, or launch the desktop app with `./target/release/ghost-app`.
 
 ## The desktop app
 
@@ -148,7 +138,7 @@ source, it needs the CUDA toolkit's NVRTC: see [Building](docs/building.md).
   files (about 3 GB) are on [Hugging Face](https://huggingface.co/affifuddin-hazam/ghost-voice).
   [More](docs/desktop-app.md#voice-calls)
 - **English or Chinese.** The desktop app's own words come in either language: Settings, General, Language,
-  or follow Windows.
+  or follow your system locale (`LANG`).
 
 <p align="center">
   <img src="docs/demo-voice.gif" width="520" alt="A voice call in the desktop app: Maya answers aloud while the pixel orb moves with her voice">
@@ -184,8 +174,7 @@ New in 0.4.0:
 - **4-bit KV cache** (`--kv q4`, the app's default): about half the memory per token, so longer chats fit.
 - **Plugins in the app**: a side-bar row with its own page, and a status badge over every page.
 - **Select and copy anywhere** in a chat, tool output included; pages the model opens go to the side pane.
-- **`ghost-infer monitor`** draws a live tokens/s graph in a terminal, and `claude-local.bat` runs Claude Code on
-  your own model (from source).
+- **`ghost-infer monitor`** draws a live tokens/s graph in a terminal.
 
 New in 0.3.0:
 
@@ -243,58 +232,43 @@ GLM-4.7-Flash run too, in Q3_K to Q8_0 or the 2-bit IQ2 formats: [the full list]
 
 ## Arch Linux / Linux Port
 
-Upstream [affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghost-infer) targets Windows 10/11 only. This fork ports both the core engine/server (`ghost-infer`) and the native desktop GUI (`ghost-app`) to run on Arch Linux (and compatible Linux distributions) without adding new external crates to the core engine:
+Upstream [affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghost-infer) targets Windows 10/11 only. This fork converts both the core engine/server (`ghost-infer`) and the native desktop GUI (`ghost-app`) into a Linux-only codebase (tested on CachyOS / Arch Linux `x86_64`, KDE Wayland, CUDA 13.5) without adding new external crates to the core engine:
 
-### What was ported
+### What was ported & removed
 
+- **Removed Windows-only artifacts & dependencies:**
+  - Deleted `installer/` (Inno Setup), `claude-local.bat`, `claude-local.ps1`, `monitor.bat`, `start-engine.bat`, all `scripts/*.ps1`, `app/src/tray.rs`, and all `#[cfg(windows)]` / Win32 FFI branches across `src/` and `app/src/`.
+  - Removed `wry` (WebView2) and `tray-icon` from `app/Cargo.toml`.
 - **CUDA / NVRTC GPU backend (`src/cuda.rs`):**
-  - Replaced stubbed non-Windows OS loader with `dlopen` / `dlsym` loading `libcuda.so.1` and `libnvrtc.so` (searching `GHOST_INFER_NVRTC`, executable dir, `CUDA_PATH`, `/opt/cuda/lib64`, `/usr/local/cuda/lib64`, `/usr/lib*`).
-  - Implemented Linux page-aligned `madvise` (`MADV_WILLNEED` / `MADV_PAGEOUT`), `getrusage` page faults, and `/proc/self/statm` RSS tracking for MoE offloading and RAM floor trimming.
-- **XDG storage & config paths (`src/sysinfo.rs`, `src/lora.rs`, `src/tools.rs`, `src/server/*`, `app/src/*`):**
-  - Replaced `%LOCALAPPDATA%\ghost-infer` with `$XDG_DATA_HOME/ghost-infer` (fallback `~/.local/share/ghost-infer`) for kernel `.cubin` caches, chats, memory, skills, plugins, checkpoints, LoRA adapters, MCP config, and schedules.
+  - Implemented Linux dynamic loading (`dlopen` / `dlsym`) for `libcuda.so.1` and `libnvrtc.so` (searching `GHOST_INFER_NVRTC`, executable dir, `CUDA_PATH`, `/opt/cuda/lib64`, `/usr/local/cuda/lib64`, `/usr/lib*`).
+  - Implemented page-aligned `madvise` (`MADV_WILLNEED` / `MADV_PAGEOUT`), `getrusage` page faults, and `/proc/self/statm` RSS tracking for MoE offloading and RAM floor trimming.
+- **XDG storage & config paths (`src/sysinfo.rs`, `src/lora.rs`, `src/tools.rs`, `src/server/*`, `app/src/*`, `scripts/nightly/common.py`):**
+  - Replaced `%LOCALAPPDATA%\ghost-infer` with `$XDG_DATA_HOME/ghost-infer` (fallback `~/.local/share/ghost-infer`) for kernel `.cubin` caches, chats, memory, skills, plugins, checkpoints, LoRA adapters, MCP config, schedules, and nightly training files.
   - Updated Claude Desktop MCP import (`src/server/mcp.rs`) to read `$XDG_CONFIG_HOME/Claude/claude_desktop_config.json` (fallback `~/.config/Claude/claude_desktop_config.json`).
 - **Process, shell, download & web tools (`src/tools.rs`, `src/server/download.rs`, `src/server/mcp.rs`, `src/server/plugins.rs`, `src/server/agent.rs`):**
-  - Guarded Windows `CommandExt::creation_flags` and `cmd /C` / `powershell.exe` / `taskkill` / `curl.exe` calls with `#[cfg(windows)]`.
-  - Added Unix `sh -c`, process-group isolation and termination (`process_group(0)` + `kill`), system `curl` for downloads and web tools, `python3` launcher for plugins, and `xdg-open` URL detection.
+  - Replaced PowerShell/cmd/taskkill/curl.exe with `sh -c`, process-group termination (`process_group(0)` + `kill`), system `curl`, `python3` launcher for plugins, and `xdg-open` URL detection.
 - **Linux system monitoring & thread scheduling (`src/sysinfo.rs`, `src/pool.rs`, `src/server/schedule.rs`, `src/monitor.rs`):**
-  - Implemented `/api/system` & `available_ram()` on Linux using `/proc/cpuinfo`, `/proc/meminfo`, `/proc/self/statm`, `/etc/os-release`, `/proc/mounts` + `statvfs`, and NVML (`libnvidia-ml.so.1`).
+  - Implemented `/api/system` & `available_ram()` using `/proc/cpuinfo`, `/proc/meminfo`, `/proc/self/statm`, `/etc/os-release`, `/proc/mounts` + `statvfs`, and NVML (`libnvidia-ml.so.1`).
   - Implemented physical-core thread affinity pinning via `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` (`sched_setaffinity`) and worker priority lowering (`setpriority`) for CPU MoE threads.
-  - Added local timezone offset (`localtime_r`) for scheduled tasks and `TIOCGWINSZ` terminal sizing for `ghost-infer monitor`.
+  - Implemented local timezone offset (`localtime_r`) for scheduled tasks and `TIOCGWINSZ` terminal sizing for `ghost-infer monitor`.
 - **Desktop app `ghost-app` (`app/Cargo.toml`, `app/src/*`):**
-  - Enabled `iced` `"x11"` and `"wayland"` features on `target_os = "linux"`.
-  - Added `xdg-open` link opening, KDE/GTK dark theme detection (`GTK_THEME`, `kdeglobals`, `gtk-3.0/settings.ini`), Unix `localtime_r` greeting, and sibling `ghost-infer` server auto-launch.
-  - Mapped UI icons from Windows-only `Segoe MDL2 Assets` to verified `DejaVu Sans` Unicode glyphs (plus `DejaVu Serif` and `Font::MONOSPACE`).
-  - Guarded Windows-only `wry` (WebView2) and `tray-icon` modules (`app/src/preview.rs`, `app/src/tray.rs`); closing the app window exits cleanly when no tray is available.
-
-### Build & run on Arch Linux
-
-Install prerequisites (CUDA toolkit for NVRTC `--gpu`, `curl`, DejaVu fonts, and PipeWire/ALSA + XDG portal for the desktop app):
-
-```bash
-sudo pacman -S cuda curl ttf-dejavu xdg-desktop-portal
-cargo build --release --workspace
-```
-
-Run the server and/or desktop app:
-
-```bash
-# Start server with GPU acceleration (OpenAI API at http://127.0.0.1:8080/v1 and web chat at http://127.0.0.1:8080)
-./target/release/ghost-infer serve /path/to/model.gguf --gpu
-
-# Or launch the native desktop app (auto-starts ./target/release/ghost-infer if not already running)
-./target/release/ghost-app
-```
+  - Enabled `iced` `"x11"` and `"wayland"` features directly in `app/Cargo.toml`.
+  - Implemented `xdg-open` link opening, KDE/GTK dark theme detection (`GTK_THEME`, `kdeglobals`, `gtk-3.0/settings.ini`), `localtime_r` greeting, and sibling `ghost-infer` server auto-launch.
+  - Mapped UI icons from `Segoe MDL2 Assets` to verified `DejaVu Sans` Unicode glyphs (plus `DejaVu Serif` and `Font::MONOSPACE`).
+  - Simplified `app/src/preview.rs` (opening generated HTML previews externally via `xdg-open` instead of embedded WebView2) and removed Windows tray-hiding so closing the window exits cleanly.
 
 ### Known Linux limitations
 
-- **Embedded preview pane & system tray (`ghost-app`):** `wry` child WebView2 and minimize-to-tray remain Windows-only; on Linux, use the **Open in browser** action (`xdg-open`) for generated HTML previews, and closing the window exits the app cleanly.
-- **Nightly sleep training (`scripts/nightly/`):** Still defaults to Windows paths (`LOCALAPPDATA`, `ghost-infer.exe`) and requires PyTorch + QLoRA (exceeds 4 GB VRAM GPUs).
+- **Embedded preview pane & system tray (`ghost-app`):** `wry` embedded WebView and tray minimization are removed; use **Open in browser** (`xdg-open`) for previews, and closing the window exits the app cleanly.
+- **Nightly sleep training (`scripts/nightly/`):** Uses Python + PyTorch QLoRA (needs ~7.5 GB VRAM per upstream notes, exceeding 4 GB VRAM cards).
 - **4 GB VRAM cards (e.g. RTX 3050 Laptop):** Dense models must fit completely in VRAM (`ghost-infer` has no partial dense layer split `--gpu-layers`), so use dense models <= ~3 GB or MoE models (`qwen3moe` / `qwen35moe` / `deepseek2`) whose non-expert weights fit in VRAM.
 
 ## Requirements
 
-- **Windows:** Windows 10 or 11, an NVIDIA GPU from the GTX 10 series on with a current driver, and a CPU with AVX2.
-- **Linux (this fork):** x86_64 Linux (tested on Arch/CachyOS), NVIDIA driver + CUDA NVRTC (`libnvrtc.so`, e.g. `cuda` package) for `--gpu`, `curl`, and a CPU with AVX2/FMA (see `Arch Linux / Linux Port` above).
+- **OS:** x86_64 Linux (tested on CachyOS / Arch Linux)
+- **GPU (`--gpu`):** NVIDIA GPU (compute capability 6.1+) with proprietary/open NVIDIA driver (`libcuda.so.1`, `libnvidia-ml.so.1`) and CUDA NVRTC (`libnvrtc.so`, e.g. Arch `cuda` package)
+- **CPU:** x86_64 with AVX2 (FMA recommended)
+- **System tools:** `curl` (downloads & web tools), `ttf-dejavu` + `xdg-desktop-portal` (desktop app icons & file picker)
 
 ## Documentation
 
@@ -303,13 +277,13 @@ Run the server and/or desktop app:
 - [The desktop app and the chat page](docs/desktop-app.md)
 - [Command line and server API](docs/usage.md)
 - [How it works](docs/how-it-works.md), and its accuracy
-- [Building, requirements and models](docs/building.md): from source, GPU requirements, the installer
+- [Building, requirements and models](docs/building.md): architecture & model format reference (note: `docs/` still describes upstream Windows paths/scripts)
 
 ## Roadmap
 
-- Linux support (ported in this fork for `ghost-infer` and `ghost-app`; embedded Linux WebView/tray and `scripts/nightly` Linux paths remain open)
 - More architectures (Gemma) and formats (Q4_0, the other IQ quants)
 - Constrained decoding for tool calls
+- Optional Linux native tray (`StatusNotifierItem`) or embedded WebView preview
 
 ## License
 

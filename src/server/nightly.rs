@@ -65,11 +65,6 @@ pub fn launch(shared: &Shared) -> Result<(), String> {
     let err = out.try_clone().map_err(|e| e.to_string())?;
     let mut command = Command::new(&python);
     command.arg("-I").arg(&script).env("GHOST_INFER_TOKEN", &shared.token).stdin(Stdio::null()).stdout(out).stderr(err);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // no console window
-    }
     let mut child = match command.spawn() {
         Ok(c) => c,
         Err(e) => {

@@ -41,22 +41,17 @@ pub fn start(url: &str, file: &str, total: u64, dir: &Path) -> Result<(), String
         return Ok(());
     }
     let part = dir.join(format!("{file}.part"));
-    let curl = if cfg!(windows) { "curl.exe" } else { "curl" };
-    let mut cmd = Command::new(curl);
-    // follow the redirect to the file's host, fail on an HTTP error, retry a dropped connection, and go
-    // on from the part already there
-    cmd.args(["-L", "--fail", "--silent", "--show-error", "--retry", "5", "--retry-delay", "3", "-C", "-", "-o"])
+    let child = Command::new("curl")
+        // follow the redirect to the file's host, fail on an HTTP error, retry a dropped connection, and go
+        // on from the part already there
+        .args(["-L", "--fail", "--silent", "--show-error", "--retry", "5", "--retry-delay", "3", "-C", "-", "-o"])
         .arg(&part)
         .arg(url)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // no console window
-    }
-    let child = cmd.spawn().map_err(|e| format!("cannot run {curl}: {e}"))?;
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run curl: {e}"))?;
     *job = Some(Job { file: file.into(), part: part.clone(), total, state: "downloading", error: String::new(), child: Some(child) });
     drop(job);
     std::thread::spawn(move || watch(part, target));

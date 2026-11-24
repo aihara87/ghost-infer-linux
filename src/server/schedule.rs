@@ -23,42 +23,11 @@ const MIN_EVERY: u32 = 5;
 
 const DAYS: [&str; 7] = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-// ---- local time: Windows' clock offset, and dates by Howard Hinnant's civil-day algorithms
+// ---- local time: system clock offset, and dates by Howard Hinnant's civil-day algorithms
 
-/// Local time minus UTC, in milliseconds (to the minute), as Windows has it now.
-#[cfg(windows)]
+/// Local time minus UTC, in milliseconds.
 fn offset_ms() -> i64 {
     #[repr(C)]
-    #[derive(Default)]
-    struct WinTime {
-        year: u16,
-        month: u16,
-        day_of_week: u16,
-        day: u16,
-        hour: u16,
-        minute: u16,
-        second: u16,
-        ms: u16,
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetLocalTime(t: *mut WinTime);
-        fn GetSystemTime(t: *mut WinTime);
-    }
-    let (mut l, mut u) = (WinTime::default(), WinTime::default());
-    unsafe {
-        GetSystemTime(&mut u);
-        GetLocalTime(&mut l);
-    }
-    let ms = |t: &WinTime| (days_from_civil(t.year as i64, t.month as u32, t.day as u32) * 86_400 + t.hour as i64 * 3600 + t.minute as i64 * 60 + t.second as i64) * 1000;
-    // the two calls are a moment apart
-    ((ms(&l) - ms(&u)) as f64 / 60_000.0).round() as i64 * 60_000
-}
-
-#[cfg(unix)]
-fn offset_ms() -> i64 {
-    #[repr(C)]
-    #[derive(Default)]
     struct Tm {
         sec: i32,
         min: i32,
@@ -85,11 +54,6 @@ fn offset_ms() -> i64 {
         }
     }
     tm.gmtoff as i64 * 1000
-}
-
-#[cfg(not(any(windows, unix)))]
-fn offset_ms() -> i64 {
-    0
 }
 
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {

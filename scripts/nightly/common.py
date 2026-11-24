@@ -16,7 +16,10 @@ import time
 import urllib.error
 import urllib.request
 
-DATA = os.path.join(os.environ.get("LOCALAPPDATA", "."), "ghost-infer")
+DATA = os.path.join(
+    os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share"),
+    "ghost-infer",
+)
 HOME = os.path.join(DATA, "nightly")
 CHATS = os.path.join(DATA, "chats")
 LORA_DIR = os.path.join(DATA, "lora")
@@ -28,8 +31,8 @@ DEFAULTS = {
     "python": sys.executable,
     "script": os.path.join(os.path.dirname(os.path.abspath(__file__)), "run.py"),
     # the model that learns: its original weights (training) and the GGUF ghost-infer runs it from
-    "base_hf": r"D:\ai-models\Huihui-Qwen3-4B-Instruct-2507-abliterated",
-    "gguf": r"C:\models\Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M.gguf",
+    "base_hf": os.path.join(os.path.expanduser("~"), "ai-models", "Huihui-Qwen3-4B-Instruct-2507-abliterated"),
+    "gguf": os.path.join(DATA, "models", "Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M.gguf"),
     # who reads the chats and writes the training conversations, tried in order: entries of relay.json by id
     # ({"relay": "deepseek-v4-pro"}: its endpoint, model and key), or {"base_url", "model", "api_key_env"}.
     # Empty: `writer`, the server's loaded model
@@ -37,7 +40,7 @@ DEFAULTS = {
     "writer": {"base_url": "http://127.0.0.1:8080/v1", "model": "", "api_key_env": ""},
     "server": "http://127.0.0.1:8080",
     # the ghost-infer that captures the agent's tool prompts each night (toolcalls.py), on a port of its own
-    "exe": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "target", "release", "ghost-infer.exe"),
+    "exe": os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "target", "release", "ghost-infer"),
     "capture_port": 8099,
     "extract_passes": 3,
     "qa_per_fact": 12,

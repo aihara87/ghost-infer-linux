@@ -208,76 +208,17 @@ pub fn run(addr: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(windows)]
-mod os {
-    use std::ffi::c_void;
-
-    #[repr(C)]
-    #[derive(Default)]
-    struct Info {
-        size: [i16; 2],
-        cursor: [i16; 2],
-        attr: u16,
-        window: [i16; 4], // left, top, right, bottom
-        max: [i16; 2],
-    }
-
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GetStdHandle(n: u32) -> *mut c_void;
-        fn GetConsoleMode(h: *mut c_void, mode: *mut u32) -> i32;
-        fn SetConsoleMode(h: *mut c_void, mode: u32) -> i32;
-        fn SetConsoleOutputCP(cp: u32) -> i32;
-        fn GetConsoleScreenBufferInfo(h: *mut c_void, info: *mut Info) -> i32;
-        fn SetConsoleCtrlHandler(handler: Option<unsafe extern "system" fn(u32) -> i32>, add: i32) -> i32;
-    }
-    const STD_OUTPUT: u32 = -11i32 as u32;
-
-    unsafe extern "system" fn on_ctrl(_: u32) -> i32 {
-        print!("\x1b[0m\x1b[?25h\n");
-        std::process::exit(0)
-    }
-
-    /// ANSI escapes and UTF-8 on, the cursor hidden (shown again on Ctrl+C), the screen cleared.
-    pub fn setup() {
-        unsafe {
-            let h = GetStdHandle(STD_OUTPUT);
-            let mut mode = 0;
-            if GetConsoleMode(h, &mut mode) != 0 {
-                SetConsoleMode(h, mode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            }
-            SetConsoleOutputCP(65001);
-            SetConsoleCtrlHandler(Some(on_ctrl), 1);
-        }
-        print!("\x1b[2J\x1b[?25l");
-    }
-
-    /// The window's columns and lines (80 x 24 when unknown).
-    pub fn size() -> (usize, usize) {
-        let mut i = Info::default();
-        if unsafe { GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT), &mut i) } != 0 {
-            ((i.window[2] - i.window[0] + 1).max(20) as usize, (i.window[3] - i.window[1] + 1).max(10) as usize)
-        } else {
-            (80, 24)
-        }
-    }
-}
-
-#[cfg(not(windows))]
 mod os {
     pub fn setup() {
         print!("\x1b[2J\x1b[?25l");
     }
     pub fn size() -> (usize, usize) {
-        #[cfg(target_os = "linux")]
-        {
-            unsafe extern "C" {
-                fn ioctl(fd: i32, req: usize, ...) -> i32;
-            }
-            let mut ws = [0u16; 4]; // winsize: row, col, xpixel, ypixel
-            if unsafe { ioctl(1, 0x5413 /* TIOCGWINSZ */, ws.as_mut_ptr()) } == 0 && ws[1] > 0 && ws[0] > 0 {
-                return ((ws[1] as usize).max(20), (ws[0] as usize).max(10));
-            }
+        unsafe extern "C" {
+            fn ioctl(fd: i32, req: usize, ...) -> i32;
+        }
+        let mut ws = [0u16; 4]; // winsize: row, col, xpixel, ypixel
+        if unsafe { ioctl(1, 0x5413 /* TIOCGWINSZ */, ws.as_mut_ptr()) } == 0 && ws[1] > 0 && ws[0] > 0 {
+            return ((ws[1] as usize).max(20), (ws[0] as usize).max(10));
         }
         let w = std::env::var("COLUMNS").ok().and_then(|v| v.parse().ok()).unwrap_or(80);
         let h = std::env::var("LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(24);

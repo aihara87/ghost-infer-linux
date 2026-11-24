@@ -1,4 +1,4 @@
-//! What an installed app does on its own: start its server (ghost-infer.exe beside it) when nothing answers
+//! What an installed app does on its own: start its server (`ghost-infer` beside it) when nothing answers
 //! yet, and offer models to download when the models folder is empty (the user picks; none is pushed).
 
 use std::path::PathBuf;
@@ -37,18 +37,12 @@ pub const OFFERS: [Offer; 3] = [
     },
 ];
 
-/// The server's and the app's data (`%LOCALAPPDATA%\ghost-infer` on Windows;
-/// `$XDG_DATA_HOME/ghost-infer` or `$HOME/.local/share/ghost-infer` elsewhere).
+/// `$XDG_DATA_HOME/ghost-infer` or `$HOME/.local/share/ghost-infer`: the server's and the app's data.
 pub fn data_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    return std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("ghost-infer"));
-    #[cfg(not(windows))]
-    {
-        if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
-            return Some(PathBuf::from(d).join("ghost-infer"));
-        }
-        std::env::var_os("HOME").filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(".local").join("share").join("ghost-infer"))
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
+        return Some(PathBuf::from(d).join("ghost-infer"));
     }
+    std::env::var_os("HOME").filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join(".local").join("share").join("ghost-infer"))
 }
 
 /// Where downloaded models go.
@@ -59,8 +53,7 @@ pub fn models_dir() -> Option<PathBuf> {
 /// The server beside this program, if the app was installed with it.
 pub fn own_server() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let name = if cfg!(windows) { "ghost-infer.exe" } else { "ghost-infer" };
-    let server = exe.with_file_name(name);
+    let server = exe.with_file_name("ghost-infer");
     server.exists().then_some(server)
 }
 
@@ -109,14 +102,7 @@ pub fn start_server(addr: &str, extra: &[String], last: Option<&str>) {
         args.push(stt.into());
     }
     let log = |name: &str| std::fs::File::create(data.join(name)).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
-    let mut cmd = std::process::Command::new(server);
-    cmd.args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log"));
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // no console window; it goes on when the app closes, as the launcher's did
-    }
-    let _ = cmd.spawn();
+    let _ = std::process::Command::new(server).args(args).stdin(std::process::Stdio::null()).stdout(log("server-out.log")).stderr(log("server.log")).spawn();
 }
 
 /// "6.2 of 16.8 GB".

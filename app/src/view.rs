@@ -93,74 +93,11 @@ impl Skin {
 
 pub const BODY: Font = Font::with_name("Instrument Sans");
 const MEDIUM: Font = Font { weight: iced::font::Weight::Medium, ..BODY };
-#[cfg(windows)]
-const SERIF: Font = Font::with_name("Georgia");
-#[cfg(not(windows))]
 const SERIF: Font = Font::with_name("DejaVu Serif");
-#[cfg(windows)]
-const ICONS: Font = Font::with_name("Segoe MDL2 Assets");
-#[cfg(not(windows))]
 const ICONS: Font = Font::with_name("DejaVu Sans");
-#[cfg(windows)]
-const MONO: Font = Font::with_name("Consolas");
-#[cfg(not(windows))]
 const MONO: Font = Font::MONOSPACE;
 
-/// Segoe MDL2 Assets code points on Windows; DejaVu Sans Unicode symbols elsewhere.
-#[cfg(windows)]
-mod ic {
-    pub const ADD: char = '\u{E710}';
-    pub const DELETE: char = '\u{E74D}';
-    pub const SETTINGS: char = '\u{E713}';
-    pub const CLOSE_PANE: char = '\u{E89F}';
-    pub const MINIMIZE: char = '\u{E921}';
-    pub const MAXIMIZE: char = '\u{E922}';
-    pub const RESTORE: char = '\u{E923}';
-    pub const CLOSE: char = '\u{E8BB}';
-    pub const DOCK_RIGHT: char = '\u{E90D}';
-    pub const CHIP: char = '\u{E950}';
-    pub const SKILL: char = '\u{E8F1}';
-    pub const PLUG: char = '\u{E71B}';
-    pub const TASKS: char = '\u{E9D5}';
-    pub const MEMORY: char = '\u{E734}';
-    pub const NOW: char = '\u{E91F}';
-    pub const TODO: char = '\u{EA3A}';
-    pub const OPEN_PANE: char = '\u{E8A0}';
-    pub const UP: char = '\u{E74A}';
-    pub const CHEVRON_UP: char = '\u{E70E}';
-    pub const RIGHT: char = '\u{E76C}';
-    pub const DOWN: char = '\u{E70D}';
-    pub const COPY: char = '\u{E8C8}';
-    pub const RETRY: char = '\u{E72C}';
-    pub const FILE: char = '\u{E8A5}';
-    pub const FOLDER: char = '\u{E8B7}';
-    pub const SEARCH: char = '\u{E721}';
-    pub const EDIT: char = '\u{E70F}';
-    pub const TERMINAL: char = '\u{E756}';
-    pub const GLOBE: char = '\u{E774}';
-    pub const PC: char = '\u{E7F8}';
-    pub const BOLT: char = '\u{E945}';
-    pub const CHECK: char = '\u{E73E}';
-    pub const CANCEL: char = '\u{E711}';
-    pub const CHAT: char = '\u{E8BD}';
-    pub const CLOCK: char = '\u{E916}';
-    pub const UNDO: char = '\u{E7A7}';
-    pub const DOWNLOAD: char = '\u{E896}';
-    pub const OPEN_NEW: char = '\u{E8A7}';
-    pub const FLAG: char = '\u{E7C1}';
-    pub const REPEAT: char = '\u{E8EE}';
-    pub const PHONE: char = '\u{E717}';
-    pub const CODE: char = '\u{E943}';
-    pub const MIC: char = '\u{E720}';
-    pub const MIC_OFF: char = '\u{EC54}';
-    pub const HANG_UP: char = '\u{E778}';
-    pub const INFO: char = '\u{E946}';
-    pub const COLOR: char = '\u{E790}';
-    pub const KEYBOARD: char = '\u{E765}';
-    pub const ATTACH: char = '\u{E723}';
-}
-
-#[cfg(not(windows))]
+/// DejaVu Sans Unicode symbols.
 mod ic {
     pub const ADD: char = '+';
     pub const DELETE: char = '\u{2715}';
@@ -220,27 +157,27 @@ fn icon<'a>(c: char, size: impl Into<Pixels>) -> text::Text<'a> {
 /// The icon a plugin picked for its row and badge, by name (the names plugins.rs's guide lists).
 fn plugin_icon(name: &str) -> char {
     match name.trim().to_lowercase().as_str() {
-        "status" | "health" | "uptime" | "pulse" | "monitor" => if cfg!(windows) { '\u{E9D9}' } else { '\u{26A1}' },
-        "chart" | "stats" | "dashboard" | "graph" => if cfg!(windows) { '\u{E9D2}' } else { '\u{25B4}' },
+        "status" | "health" | "uptime" | "pulse" | "monitor" => '\u{26A1}',
+        "chart" | "stats" | "dashboard" | "graph" => '\u{25B4}',
         "globe" | "web" | "site" => ic::GLOBE,
-        "shield" | "security" => if cfg!(windows) { '\u{EA18}' } else { '\u{2605}' },
-        "bell" | "alert" | "alerts" => if cfg!(windows) { '\u{EA8F}' } else { '\u{2691}' },
-        "calendar" => if cfg!(windows) { '\u{E787}' } else { ic::FILE },
-        "cloud" | "weather" => if cfg!(windows) { '\u{E753}' } else { '\u{2601}' },
-        "mail" | "email" => if cfg!(windows) { '\u{E715}' } else { '\u{2709}' },
-        "money" | "finance" | "payment" => if cfg!(windows) { '\u{E8C7}' } else { '$' },
-        "music" | "audio" => if cfg!(windows) { '\u{E8D6}' } else { '\u{266A}' },
-        "home" => if cfg!(windows) { '\u{E80F}' } else { '\u{2302}' },
-        "people" | "users" | "contacts" => if cfg!(windows) { '\u{E716}' } else { ic::SEARCH },
-        "shop" | "store" | "cart" => if cfg!(windows) { '\u{E719}' } else { ic::MEMORY },
-        "game" | "games" => if cfg!(windows) { '\u{E7FC}' } else { '\u{2666}' },
-        "map" | "location" => if cfg!(windows) { '\u{E707}' } else { ic::GLOBE },
+        "shield" | "security" => '\u{2605}',
+        "bell" | "alert" | "alerts" => '\u{2691}',
+        "calendar" => ic::FILE,
+        "cloud" | "weather" => '\u{2601}',
+        "mail" | "email" => '\u{2709}',
+        "money" | "finance" | "payment" => '$',
+        "music" | "audio" => '\u{266A}',
+        "home" => '\u{2302}',
+        "people" | "users" | "contacts" => ic::SEARCH,
+        "shop" | "store" | "cart" => ic::MEMORY,
+        "game" | "games" => '\u{2666}',
+        "map" | "location" => ic::GLOBE,
         "clock" | "time" => ic::CLOCK,
         "news" | "doc" | "document" => ic::FILE,
         "code" => ic::CODE,
         "chat" => ic::CHAT,
-        "warning" => if cfg!(windows) { '\u{E7BA}' } else { '\u{26A0}' },
-        "heart" => if cfg!(windows) { '\u{EB51}' } else { '\u{2665}' },
+        "warning" => '\u{26A0}',
+        "heart" => '\u{2665}',
         "star" => ic::MEMORY,
         "bolt" => ic::BOLT,
         _ => ic::PLUG,
@@ -320,59 +257,29 @@ struct Item {
 
 /// "Good morning" etc., from the computer's clock.
 fn greeting() -> &'static str {
-    let hour = {
-        #[cfg(windows)]
-        {
-            #[repr(C)]
-            #[derive(Default)]
-            struct SystemTime {
-                year: u16,
-                month: u16,
-                dow: u16,
-                day: u16,
-                hour: u16,
-                minute: u16,
-                second: u16,
-                ms: u16,
-            }
-            unsafe extern "system" {
-                fn GetLocalTime(t: *mut SystemTime);
-            }
-            let mut t = SystemTime::default();
-            unsafe { GetLocalTime(&mut t) };
-            t.hour as i32
-        }
-        #[cfg(unix)]
-        {
-            #[repr(C)]
-            struct Tm {
-                sec: i32,
-                min: i32,
-                hour: i32,
-                mday: i32,
-                mon: i32,
-                year: i32,
-                wday: i32,
-                yday: i32,
-                isdst: i32,
-                gmtoff: isize,
-                zone: *const i8,
-            }
-            unsafe extern "C" {
-                fn time(t: *mut isize) -> isize;
-                fn localtime_r(timep: *const isize, result: *mut Tm) -> *mut Tm;
-            }
-            let mut now = 0isize;
-            let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() };
-            unsafe {
-                time(&mut now);
-                if localtime_r(&now, &mut tm).is_null() { 12 } else { tm.hour }
-            }
-        }
-        #[cfg(not(any(windows, unix)))]
-        {
-            12
-        }
+    #[repr(C)]
+    struct Tm {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: isize,
+        zone: *const i8,
+    }
+    unsafe extern "C" {
+        fn time(t: *mut isize) -> isize;
+        fn localtime_r(timep: *const isize, result: *mut Tm) -> *mut Tm;
+    }
+    let mut now = 0isize;
+    let mut tm = Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() };
+    let hour = unsafe {
+        time(&mut now);
+        if localtime_r(&now, &mut tm).is_null() { 12 } else { tm.hour }
     };
     match hour {
         5..=11 => tr("Good morning"),
@@ -710,7 +617,7 @@ impl App {
                         tr("Language"),
                         vec![row_of(
                             tr("Language"),
-                            tr("English by default. Chinese follows Windows unless you pick one.").into(),
+                            tr("English by default. Chinese follows your system locale unless you pick one.").into(),
                             picker_box(
                                 row![
                                     lang_choice(tr("English"), crate::i18n::Lang::En),
@@ -731,7 +638,7 @@ impl App {
                     ),
                     group(
                         tr("Quitting"),
-                        vec![row_of(tr("Quit ghost"), tr("Closing the window keeps ghost in the tray. This stops it and frees the model's memory.").into(), action(tr("Quit"), Message::Quit, true))],
+                        vec![row_of(tr("Quit ghost"), tr("Stops the local server and frees the model's memory.").into(), action(tr("Quit"), Message::Quit, true))],
                     ),
                 ],
             ),
@@ -752,7 +659,7 @@ impl App {
                     border: Border { radius: 10.0.into(), width: 1.0, color: s.line2 },
                     ..Default::default()
                 });
-                (tr("Appearance"), tr("How ghost looks."), vec![group(tr("Theme"), vec![row_of(tr("Colour theme"), tr("Fog is light, Graphite dark. System follows Windows.").into(), picker.into())])])
+                (tr("Appearance"), tr("How ghost looks."), vec![group(tr("Theme"), vec![row_of(tr("Colour theme"), tr("Fog is light, Graphite dark. System follows your desktop theme.").into(), picker.into())])])
             }
             P::Models => {
                 // each folder by its path; the ones added here can be removed (the server's own come back when it

@@ -1375,7 +1375,7 @@ $("folderChip").onclick = (e) => {
   const folders = S.harness.folders || [];
   openPop(e.currentTarget, `<div class="h">New chats work in</div>` + folders.map((f) => `<button class="opt" data-v="${esc(f)}" ${f === chatCwd() ? "data-current" : ""}><span class="ck">${f === chatCwd() ? icon("check") : ""}</span><span class="w">${esc(baseName(f))}<small>${esc(f)}</small></span></button>`).join("")
     + (folders.length ? "<hr>" : `<div class="h" style="color:var(--muted)">The agent reads and changes files only in folders you allow.</div>`)
-    + `<div class="h">Add a folder on ${LOCAL ? "this computer" : esc(location.hostname)} by its path</div><form class="inrow" id="addFolder"><input placeholder="${S.system && /Windows/.test(S.system.os || "") ? "C:\\projects\\app" : "/home/you/project"}" spellcheck="false" aria-label="Folder path"><button class="btn sm pri">Add</button></form>`,
+    + `<div class="h">Add a folder on ${LOCAL ? "this computer" : esc(location.hostname)} by its path</div><form class="inrow" id="addFolder"><input placeholder="/home/you/project" spellcheck="false" aria-label="Folder path"><button class="btn sm pri">Add</button></form>`,
     (v) => { S.workdir = v; store.set("workdir", v); drawChips(); drawRail(); closePop(); input.focus(); });
   pop.querySelector("#addFolder").onsubmit = async (ev) => {
     ev.preventDefault(); const p = ev.target.querySelector("input").value.trim(); if (!p) return;
@@ -1797,7 +1797,7 @@ function drawExtras() {
     const [c, note] = m.status === "ready" ? ["ok", `${(m.tools || []).length} tools`] : m.status === "starting" ? ["warn", "starting"] : ["bad", m.status];
     return `<div class="kv"><span class="lamp" style="background:var(--${c})"></span><span class="k">${esc(m.name)}</span><span class="v" title="${esc(note)}" style="max-width:120px;overflow:hidden;text-overflow:ellipsis">${esc(note)}</span></div>`;
   }).join("") : `<div class="kv faint">None set up</div>`)
-    + `<div class="lks"><button class="lk" id="mcpEdit">Edit servers</button><button class="lk" id="mcpReload">Reload</button>${S.system && /Windows/.test(S.system.os || "") ? `<button class="lk" id="mcpImport">From Claude</button>` : ""}</div>`;
+    + `<div class="lks"><button class="lk" id="mcpEdit">Edit servers</button><button class="lk" id="mcpReload">Reload</button><button class="lk" id="mcpImport">From Claude</button></div>`;
   // plugins
   $("cardPlugins").hidden = !S.plugins.length;
   $("pluginsNote").textContent = S.plugins.length ? String(S.plugins.filter((p) => p.enabled).length) + " on" : "";

@@ -1,4 +1,4 @@
-//! NVIDIA GPU backend. Loads the CUDA driver (nvcuda.dll) and NVRTC at runtime, compiles the kernels
+//! NVIDIA GPU backend. Loads the CUDA driver (`libcuda.so.1`) and NVRTC at runtime, compiles the kernels
 //! below to PTX for the installed GPU, and runs the whole transformer on the device. No build-time CUDA
 //! dependency: without a GPU the binary still works on the CPU.
 
@@ -4872,91 +4872,11 @@ __global__ void wh_attention(const float* __restrict__ q, const float* __restric
 type CuResult = i32;
 type Ptr = *mut c_void;
 
-#[cfg(windows)]
-mod os {
-    use std::ffi::c_void;
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
-        fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
-        fn SetDllDirectoryW(dir: *const u16) -> i32;
-        fn GetCurrentProcess() -> *mut c_void;
-        fn PrefetchVirtualMemory(process: *mut c_void, n: usize, ranges: *const Range, flags: u32) -> i32;
-        fn VirtualUnlock(addr: *mut c_void, bytes: usize) -> i32;
-    }
-    const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
-
-    #[repr(C)]
-    struct Range {
-        addr: *mut c_void,
-        bytes: usize,
-    }
-
-    /// Asks Windows to read these (address, length) ranges of mapped memory in now, as large concurrent
-    /// reads, instead of one 4 KB page fault at a time later. Only a hint: failure changes nothing.
-    pub fn prefetch(ranges: &[(usize, usize)]) {
-        let r: Vec<Range> = ranges.iter().map(|&(a, n)| Range { addr: a as *mut c_void, bytes: n }).collect();
-        unsafe { PrefetchVirtualMemory(GetCurrentProcess(), r.len(), r.as_ptr(), 0) };
-    }
-
-    /// This process's page faults so far and its working set in bytes.
-    pub fn page_faults() -> (u64, u64) {
-        #[repr(C)]
-        #[derive(Default)]
-        struct Pmc {
-            cb: u32,
-            faults: u32,
-            peak_ws: usize,
-            ws: usize,
-            rest: [usize; 6],
-        }
-        #[link(name = "kernel32")]
-        unsafe extern "system" {
-            fn K32GetProcessMemoryInfo(p: *mut c_void, c: *mut Pmc, cb: u32) -> i32;
-        }
-        let mut c = Pmc { cb: size_of::<Pmc>() as u32, ..Default::default() };
-        unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) };
-        (c.faults as u64, c.ws as u64)
-    }
-
-    /// Physical memory available to programs now, in bytes (free pages and the reusable file cache);
-    /// unknown: as much as could be wanted, so the RAM floor does nothing.
-    pub fn available_ram() -> u64 {
-        crate::sysinfo::available_ram().unwrap_or(u64::MAX)
-    }
-
-    /// Takes these ranges of mapped memory out of the working set (VirtualUnlock on pages that are not
-    /// locked does exactly that): they stay in the file cache, but are the first memory Windows reuses.
-    pub fn release(ranges: &[(usize, usize)]) {
-        for &(a, n) in ranges {
-            unsafe { VirtualUnlock(a as *mut c_void, n) };
-        }
-    }
-
-    pub fn open(path: &str) -> Option<*mut c_void> {
-        // nvrtc loads nvrtc-builtins*.dll lazily at compile time; make its folder searchable
-        if let Some(dir) = std::path::Path::new(path).parent() {
-            let wide: Vec<u16> = dir.to_string_lossy().encode_utf16().chain(Some(0)).collect();
-            unsafe { SetDllDirectoryW(wide.as_ptr()) };
-        }
-        let wide: Vec<u16> = path.encode_utf16().chain(Some(0)).collect();
-        let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), LOAD_WITH_ALTERED_SEARCH_PATH) };
-        (!h.is_null()).then_some(h)
-    }
-
-    pub fn symbol(lib: *mut c_void, name: &str) -> Option<*mut c_void> {
-        let c = std::ffi::CString::new(name).ok()?;
-        let p = unsafe { GetProcAddress(lib, c.as_ptr() as *const u8) };
-        (!p.is_null()).then_some(p)
-    }
-}
-
-#[cfg(not(windows))]
 mod os {
     use std::ffi::{CString, c_void};
     use std::sync::OnceLock;
 
-    #[cfg_attr(target_os = "linux", link(name = "dl"))]
+    #[link(name = "dl")]
     unsafe extern "C" {
         fn dlopen(name: *const i8, flags: i32) -> *mut c_void;
         fn dlsym(lib: *mut c_void, name: *const i8) -> *mut c_void;
@@ -5123,18 +5043,14 @@ impl Api {
     }
 }
 
-/// GHOST_INFER_NVRTC, else the NVRTC beside the program (the installer ships one), else the newest under the
-/// CUDA toolkit folder.
+/// GHOST_INFER_NVRTC, else the NVRTC beside the program, else the newest under the CUDA toolkit folder.
 fn find_nvrtc() -> Option<String> {
     if let Ok(p) = std::env::var("GHOST_INFER_NVRTC") {
         return Some(p);
     }
     let is_nvrtc = |p: &std::path::Path| {
         let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        #[cfg(windows)]
-        return n.starts_with("nvrtc64_") && n.ends_with(".dll") && !n.contains(".alt");
-        #[cfg(not(windows))]
-        return (n == "libnvrtc.so" || n.starts_with("libnvrtc.so.")) && !n.contains(".alt");
+        (n == "libnvrtc.so" || n.starts_with("libnvrtc.so.")) && !n.contains(".alt")
     };
     let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf()));
     if let Some(p) = beside.and_then(|d| std::fs::read_dir(d).ok()).and_then(|d| d.flatten().map(|e| e.path()).filter(|p| is_nvrtc(p)).max()) {
@@ -5143,20 +5059,10 @@ fn find_nvrtc() -> Option<String> {
     let mut roots = Vec::new();
     if let Ok(p) = std::env::var("CUDA_PATH") {
         roots.push(std::path::PathBuf::from(&p));
-        #[cfg(windows)]
-        roots.push(std::path::PathBuf::from(&p).join("bin"));
-        #[cfg(not(windows))]
         roots.push(std::path::PathBuf::from(&p).join("lib64"));
     }
-    #[cfg(windows)]
-    if let Ok(dirs) = std::fs::read_dir(r"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA") {
-        roots.extend(dirs.flatten().map(|d| d.path().join("bin")));
-    }
-    #[cfg(not(windows))]
-    {
-        for dir in ["/opt/cuda/lib64", "/usr/local/cuda/lib64", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"] {
-            roots.push(std::path::PathBuf::from(dir));
-        }
+    for dir in ["/opt/cuda/lib64", "/usr/local/cuda/lib64", "/usr/lib", "/usr/lib64", "/usr/lib/x86_64-linux-gnu"] {
+        roots.push(std::path::PathBuf::from(dir));
     }
     let mut found: Vec<std::path::PathBuf> = roots
         .iter()
@@ -5165,20 +5071,13 @@ fn find_nvrtc() -> Option<String> {
         .filter(|p| is_nvrtc(p))
         .collect();
     found.sort();
-    #[cfg(windows)]
-    return found.pop().map(|p| p.to_string_lossy().into_owned());
-    #[cfg(not(windows))]
-    return found.pop().map(|p| p.to_string_lossy().into_owned()).or_else(|| Some("libnvrtc.so".into()));
+    found.pop().map(|p| p.to_string_lossy().into_owned()).or_else(|| Some("libnvrtc.so".into()))
 }
 
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
-        #[cfg(windows)]
-        let cuda_lib = "nvcuda.dll";
-        #[cfg(not(windows))]
-        let cuda_lib = "libcuda.so.1";
-        let cuda = os::open(cuda_lib).ok_or_else(|| format!("no NVIDIA driver ({cuda_lib}) found"))?;
+        let cuda = os::open("libcuda.so.1").ok_or("no NVIDIA driver (libcuda.so.1) found")?;
         let nvrtc_path = find_nvrtc().ok_or("no NVRTC found (install the CUDA toolkit or set GHOST_INFER_NVRTC)")?;
         let nvrtc = os::open(&nvrtc_path).ok_or_else(|| format!("cannot load {nvrtc_path}"))?;
         let f = Fns::load(cuda, nvrtc)?;
@@ -5861,14 +5760,8 @@ const STAGE_BYTES: usize = 32 << 20;
 
 /// Fills `buf` from `file` at `offset` (positioned reads: no shared cursor).
 fn read_exact_at(file: &std::fs::File, mut buf: &mut [u8], mut offset: u64) -> Result<(), String> {
-    #[cfg(windows)]
-    use std::os::windows::fs::FileExt;
-    #[cfg(not(windows))]
     use std::os::unix::fs::FileExt;
     while !buf.is_empty() {
-        #[cfg(windows)]
-        let n = file.seek_read(buf, offset);
-        #[cfg(not(windows))]
         let n = file.read_at(buf, offset);
         match n {
             Ok(0) => return Err("model file ended early".into()),

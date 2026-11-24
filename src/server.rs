@@ -316,17 +316,10 @@ pub fn run_token_path(port: u16) -> Option<PathBuf> {
     agent::data_dir().ok().map(|d| d.join(format!("run-token-{port}")))
 }
 
-/// Writes a file only this user can read (unix: mode 0600; Windows: %LOCALAPPDATA% is the user's already).
+/// Writes a file only this user can read (mode 0600).
 fn write_private(path: &Path, text: &str) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let _ = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path).and_then(|mut f| f.write_all(text.as_bytes()));
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = std::fs::write(path, text);
-    }
+    use std::os::unix::fs::OpenOptionsExt;
+    let _ = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path).and_then(|mut f| f.write_all(text.as_bytes()));
 }
 
 /// Whether the saved settings have the server listen on every address when no --host is given.

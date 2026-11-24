@@ -86,42 +86,6 @@ pub fn unjoin(raw: &str) -> (String, Vec<Attachment>) {
     (raw[..first].trim_end().to_string(), files)
 }
 
-/// Files copied in Explorer (on the clipboard as CF_HDROP), for Ctrl+V in the message box.
-#[cfg(windows)]
-pub fn clipboard_files() -> Vec<std::path::PathBuf> {
-    #[link(name = "user32")]
-    unsafe extern "system" {
-        fn OpenClipboard(hwnd: isize) -> i32;
-        fn CloseClipboard() -> i32;
-        fn IsClipboardFormatAvailable(format: u32) -> i32;
-        fn GetClipboardData(format: u32) -> isize;
-    }
-    #[link(name = "shell32")]
-    unsafe extern "system" {
-        fn DragQueryFileW(drop: isize, file: u32, buf: *mut u16, len: u32) -> u32;
-    }
-    const CF_HDROP: u32 = 15;
-    let mut out = Vec::new();
-    unsafe {
-        if IsClipboardFormatAvailable(CF_HDROP) == 0 || OpenClipboard(0) == 0 {
-            return out;
-        }
-        let drop = GetClipboardData(CF_HDROP);
-        if drop != 0 {
-            let n = DragQueryFileW(drop, u32::MAX, std::ptr::null_mut(), 0);
-            for i in 0..n {
-                let len = DragQueryFileW(drop, i, std::ptr::null_mut(), 0);
-                let mut buf = vec![0u16; len as usize + 1];
-                let got = DragQueryFileW(drop, i, buf.as_mut_ptr(), buf.len() as u32);
-                out.push(std::path::PathBuf::from(String::from_utf16_lossy(&buf[..got as usize])));
-            }
-        }
-        CloseClipboard();
-    }
-    out
-}
-
-#[cfg(not(windows))]
 pub fn clipboard_files() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
