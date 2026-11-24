@@ -15,7 +15,8 @@
 > **Linux-Only Fork (Arch / CachyOS):** This repository is a Linux-only port and cleanup of the original Windows project **[affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghost-infer)**. Windows-specific code (`Win32` APIs, `wry`/WebView2, `tray-icon`, `.bat`/`.ps1` scripts, and the Inno Setup `installer/`) has been removed. See [Arch Linux / Linux Port](#arch-linux--linux-port) for details.
 
 <p align="center">
-  <a href="#install"><b>Install</b></a> ·
+  <a href="#install--build-from-source"><b>Install</b></a> ·
+  <a href="#arch-linux--linux-port"><b>Linux Port</b></a> ·
   <a href="#speed">Speed</a> ·
   <a href="#models-bigger-than-your-gpu">The engine</a> ·
   <a href="#the-desktop-app">Desktop app</a> ·
@@ -114,15 +115,26 @@ start.
 
 ## Install & Build from source
 
-Install prerequisites on Arch Linux (CUDA toolkit for NVRTC `--gpu`, `curl`, DejaVu fonts, and XDG portal / PipeWire for the desktop app):
+Install prerequisites on Arch Linux / CachyOS (CUDA toolkit for NVRTC `--gpu`, `curl`, DejaVu fonts, and XDG portal for the desktop app file picker):
 
 ```bash
 sudo pacman -S cuda curl ttf-dejavu xdg-desktop-portal
 cargo build --release --workspace
+```
+
+Run the HTTP/OpenAI server directly:
+
+```bash
 ./target/release/ghost-infer serve models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --gpu
 ```
 
-Open <http://127.0.0.1:8080> to chat, point any OpenAI client at `http://127.0.0.1:8080/v1`, or launch the desktop app with `./target/release/ghost-app`.
+Or launch the Linux desktop app (auto-spawns the sibling `ghost-infer serve` with `--gpu --ctx 65536 --kv int8`):
+
+```bash
+./target/release/ghost-app path/to/model.gguf --gpu
+```
+
+Open <http://127.0.0.1:8080> in a browser for the web UI, or point any OpenAI client at `http://127.0.0.1:8080/v1`.
 
 ## The desktop app
 
@@ -158,8 +170,8 @@ used: the facts must be learned, general answers unchanged, and the model must s
 check fails, the one before stays. Settings, Sleep training shows each night and everything it has learned,
 with the chat each fact came from, and forgetting a fact takes it out of the next night's training.
 
-Experimental, and for now from source only: it trains with Python and PyTorch on the model's original weights
-(`scripts/nightly`, about 25 minutes a night on an 8 GB card), and the installer does not include it yet.
+Experimental, and runs from source only: it trains with Python and PyTorch on the model's original weights
+(`scripts/nightly`, about 25 minutes a night on an 8 GB card).
 
 ## What's new
 
@@ -171,7 +183,7 @@ New in 0.4.0:
 - **Faster sampling.** Picking a token with temperature, top-k or a repetition penalty no longer scans the whole
   vocabulary: up to 3 ms less per token.
 - **Ternary Bonsai 27B on the GPU** (Q2_0 and PTQ1_0), about 40 tokens/s on an 8 GB card.
-- **4-bit KV cache** (`--kv q4`, the app's default): about half the memory per token, so longer chats fit.
+- **4-bit / 8-bit KV cache** (`--kv q4` in upstream 0.4.0 notes; `ghost-app` on Linux defaults to `--kv int8` with `--ctx 65536`).
 - **Plugins in the app**: a side-bar row with its own page, and a status badge over every page.
 - **Select and copy anywhere** in a chat, tool output included; pages the model opens go to the side pane.
 - **`ghost-infer monitor`** draws a live tokens/s graph in a terminal.
@@ -194,11 +206,11 @@ New in 0.3.0:
 - **Sleep training (from source, experimental).** Each night it can train what your chats taught into an
   adapter for Qwen3-4B, checked before it is used: the facts learned, general answers unchanged, tools still
   called. Settings, Sleep training shows what it learned and lets you forget any of it. It needs Python and
-  PyTorch and runs from a copy of the source (`scripts/nightly`); the installer does not include it yet.
+  PyTorch and runs from source (`scripts/nightly`).
 
 New in 0.2.5:
 
-- **The desktop app in Chinese.** Settings, General, Language: English, 中文, or System to follow Windows. It
+- **The desktop app in Chinese.** Settings, General, Language: English, 中文, or System to follow your system locale. It
   switches at once, no restart. The model still answers in whatever language you write in. Thanks to
   [huai_xin](https://github.com/2424830124) for the translation.
 
@@ -209,8 +221,8 @@ New in 0.2.4:
   25.2 to 39.7 tokens/s and at 64K from 12.0 to 40.8; reading a 128K-token prompt takes about 4 minutes
   instead of 27 (81 to 581 tokens/s). `GHOST_INFER_NO_TC_DECODE=1` and `GHOST_INFER_NO_TC_ATT=1` turn the new
   kernels off.
-- **Attach files in the desktop app.** Text and code files go with a message: from the + menu, dropped on the
-  window, or pasted with Ctrl+V after copying them in Explorer.
+- **Attach files in the desktop app.** Text and code files go with a message: from the `+` menu or dropped onto the
+  window.
 - **See a file being written.** While the model writes a file, the reply shows a live line with its name, how
   much is written and for how long, instead of going quiet until the file is done.
 - **Smaller fixes in the app.** Each thinking block opens and closes on its own, and the token count and
@@ -251,11 +263,13 @@ Upstream [affifuddin-hazam/ghost-infer](https://github.com/affifuddin-hazam/ghos
   - Implemented `/api/system` & `available_ram()` using `/proc/cpuinfo`, `/proc/meminfo`, `/proc/self/statm`, `/etc/os-release`, `/proc/mounts` + `statvfs`, and NVML (`libnvidia-ml.so.1`).
   - Implemented physical-core thread affinity pinning via `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` (`sched_setaffinity`) and worker priority lowering (`setpriority`) for CPU MoE threads.
   - Implemented local timezone offset (`localtime_r`) for scheduled tasks and `TIOCGWINSZ` terminal sizing for `ghost-infer monitor`.
-- **Desktop app `ghost-app` (`app/Cargo.toml`, `app/src/*`):**
-  - Enabled `iced` `"x11"` and `"wayland"` features directly in `app/Cargo.toml`.
-  - Implemented `xdg-open` link opening, KDE/GTK dark theme detection (`GTK_THEME`, `kdeglobals`, `gtk-3.0/settings.ini`), `localtime_r` greeting, and sibling `ghost-infer` server auto-launch.
+- **Desktop app `ghost-app` (`app/Cargo.toml`, `app/src/*`, `src/server.rs`):**
+  - Enabled `iced` `"x11"` and `"wayland"` features with Wayland `application_id = "ghost-infer"`.
+  - Implemented `xdg-open` link/file/preview opening (for web previews, `GHOST.md`, `mcp.json`, and skill folders), KDE/GTK dark theme detection (`GTK_THEME`, `kdeglobals`, `gtk-3.0/settings.ini`), `localtime_r` greeting, and `This PC` sidebar footer clipping.
   - Mapped UI icons from `Segoe MDL2 Assets` to verified `DejaVu Sans` Unicode glyphs (plus `DejaVu Serif` and `Font::MONOSPACE`).
-  - Simplified `app/src/preview.rs` (opening generated HTML previews externally via `xdg-open` instead of embedded WebView2) and removed Windows tray-hiding so closing the window exits cleanly.
+  - Added CLI forwarding for `<model.gguf>`, `--port`, `:port`, `host:port`, `--gpu`, `--ctx`, `--kv`, etc., plus startup error reporting from `$XDG_DATA_HOME/ghost-infer/server.log`.
+  - Updated sibling `ghost-infer serve` lifecycle management: defaults to `--gpu --ctx 65536 --kv int8`, avoids false restarts on custom ports, and reliably stops the spawned server on close (`✕` / `Quit`), including early closes during `Connecting...`.
+  - Added canonical path deduplication (`same_dir`) for `--models` / `/api/models/folders` in `Settings -> Models`, and plain-text / think-only / empty-reply rendering fallbacks when models emit `<think>`-only blocks or raw HTML/XML tags (`<function>`, `<result>`).
 
 ### Known Linux limitations
 
@@ -300,8 +314,9 @@ terms or conditions.
 
 The chat page includes [three.js](https://threejs.org) (MIT, [`src/vendor/three.LICENSE`](src/vendor/three.LICENSE))
 and the [Instrument Sans](https://github.com/Instrument/instrument-sans) typeface (SIL Open Font License 1.1,
-[`src/vendor/instrument-sans.LICENSE`](src/vendor/instrument-sans.LICENSE)). The installer includes NVIDIA's
-NVRTC under the CUDA Toolkit EULA ([`installer/THIRD-PARTY.txt`](installer/THIRD-PARTY.txt)).
+[`src/vendor/instrument-sans.LICENSE`](src/vendor/instrument-sans.LICENSE)). GPU execution dynamically loads
+NVIDIA CUDA/NVRTC libraries from the host system (`cuda` package on Arch Linux; the Windows `installer/` was
+removed in this fork).
 
 The speed race names the engines it measures with their marks: llama.cpp's from
 [ggml-org/llama-brand](https://github.com/ggml-org/llama-brand), and Ollama's. They belong to their projects,
